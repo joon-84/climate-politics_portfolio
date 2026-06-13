@@ -1,0 +1,52 @@
+---
+title: "European Climate Politics: Party Positions and Trends"
+author: "Junhui Park"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# 1. Introduction
+Climate change has become one of the most contested political issues in Western Europe. This project examines how political parties in four countries (France, Germany, Sweden, and the United Kingdom) differ in their positions towards environmental protection, using the Comparative Manifesto Project (CMP) dataset obtained from the WZB Berlin Social Sciences Centre (https://manifesto-project.wzb.eu).
+This analysis focuses on per501 (Environmental Protection) in domain 5 (Welfare and Quality of LIfe) of the dataset.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+```
+
+# 2. Data
+```{r}
+library(manifestoR)
+library(tidyverse)
+
+mp_setapikey(key = "af74549df67d5fb1f281d60a9158c579")
+cmp <- mp_maindataset()
+
+country <- cmp %>%
+ filter(countryname %in% c("Germany", "France", "Sweden", "United Kingdom")) %>%
+ mutate(year = date %/% 100)
+
+```
+
+# 3. Descriptive Statistics
+```{r}
+# overview of filtered dataset
+glimpse(country)
+
+# check data availability by country and year
+table(country$countryname, country$year)
+
+# summary statistics of environmental protection variable (per501)
+summary(country$per501)
+```
+
+# 4. Visualisation
+```{r}
+
+```
+
+# 5. Regression Analysis
+```{r}
+
+```
+
