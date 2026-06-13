@@ -8,33 +8,32 @@ output: html_document
 # 1. Introduction
 Climate change has become one of the most contested political issues in Western Europe. This project examines how political parties in four countries (France, Germany, Sweden, and the United Kingdom) differ in their positions towards environmental protection, using the Comparative Manifesto Project (CMP) dataset obtained from the WZB Berlin Social Sciences Centre (https://manifesto-project.wzb.eu).
 This analysis focuses on per501 (Environmental Protection) in domain 5 (Welfare and Quality of LIfe) of the dataset.
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-
-
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+library(manifestoR)
+library(tidyverse)
+mp_setapikey(key = "af74549df67d5fb1f281d60a9158c579")
 ```
 
 # 2. Data
-```{r}
-library(manifestoR)
-library(tidyverse)
-
-mp_setapikey(key = "af74549df67d5fb1f281d60a9158c579")
+```{r, message=FALSE, warning=FALSE, results='hide'}
 cmp <- mp_maindataset()
 
 country <- cmp %>%
  filter(countryname %in% c("Germany", "France", "Sweden", "United Kingdom")) %>%
  mutate(year = date %/% 100)
-
 ```
+
 
 # 3. Descriptive Statistics
 ```{r}
-# overview of filtered dataset
-glimpse(country)
+# key variable overview
+country %>%
+ select(countryname, partyname, parfam, year, pervote, rile, per501) %>%
+ glimpse()
 
-# check data availability by country and year
-table(country$countryname, country$year)
+# number of observation by country
+country %>%
+ count(countryname)
 
 # summary statistics of environmental protection variable (per501)
 summary(country$per501)
@@ -42,11 +41,70 @@ summary(country$per501)
 
 # 4. Visualisation
 ```{r}
+library(ggplot2)
+
+# time-series data by country
+
+country_mean <- country %>%
+ group_by(countryname, year) %>%
+ summarise(mean_per501 = mean(per501)) %>%
+ ungroup()
+
+ 
+ ggplot(country_mean, aes(x = year, y = mean_per501, colour = countryname)) +
+ geom_line() +
+  labs(title = "Time-series data of the environmental protection manifesto by country",
+       x = "Year",
+       y = "Average of per501",
+       color = "Country") +
+  theme_minimal()
+
+# time-series data by party family
+
+party_family <- country %>%
+ mutate(parfam_label = case_when(
+  parfam == 10 ~ "ECO",
+  parfam == 30 ~ "SOC",
+  parfam == 50 ~ "CHR",
+  parfam == 60 ~ "CON",
+  parfam == 70 ~ "NAT",
+  TRUE ~ "Other"
+ )) %>%
+ filter(parfam_label != "Other")
+
+ 
+ggplot(party_family,
+       aes(x = year, y = per501, colour = parfam_label)) +
+ geom_line() +
+ facet_wrap(~ countryname) +
+ labs(
+  title = "Time-series data of the environmental protection manifesto by party family",
+  x = "Year",
+  y = "Environmental protection manifesto",
+  color = "Party family"
+ ) +
+ theme_minimal()
 
 ```
 
 # 5. Regression Analysis
-```{r}
+```{r, results='asis'}
+model1 <- lm(per501 ~ year, country)
+summary(model1)
+
+model2 <- lm(per501 ~ year + parfam_label, party_family)
+summary(model2)
+
+model3 <- lm(per501 ~ year + parfam_label + countryname, party_family)
+summary(model3)
+
+library(stargazer)
+stargazer(model1, model2, model3, 
+          type = "html",
+          title = "Regression Results: Determinants of Environmental Protection Manifesto",
+          dep.var.labels = "Environmental Protection (per501)",
+          covariate.labels = c("Year", "CON", "ECO", "NAT", "SOC", 
+                               "Germany", "Sweden", "United Kingdom"))
 
 ```
 
