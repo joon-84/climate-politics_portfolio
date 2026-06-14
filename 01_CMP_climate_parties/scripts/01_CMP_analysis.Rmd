@@ -11,7 +11,7 @@ This analysis focuses on per501 (Environmental Protection) in domain 5 (Welfare 
 ```{r, message=FALSE, warning=FALSE, include=FALSE}
 library(manifestoR)
 library(tidyverse)
-mp_setapikey(key = "af74549df67d5fb1f281d60a9158c579")
+mp_setapikey(key = "Enter your own API Key")
 ```
 
 # 2. Data
