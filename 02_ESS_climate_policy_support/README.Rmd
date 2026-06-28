@@ -58,6 +58,8 @@ The ICC for all three models ranges between 4 and 6 percent (tax: 6%, subsidy: 6
 
 Across the three models, gender, education, household income, and political orientation show consistent and statistically significant effects in the hypothesised direction (H1a, H1d, H1e, H2). Age (H1b) and residence (H1c) show significant effects in the tax model, but these effects are either not statistically significant (residence, in the subsidy and ban models) or reversed in direction (age, in the ban model).
 
+It is also worth noting that the intercepts across the three models suggest that overall support for these policies is moderate at best: respondents lean toward opposing the tax policy, while subsidy and ban policies receive close to neutral levels of support on average. This indicates that even where certain socio-demographic and policial groups are more supportive than others, none of the three policies enjoys strong support across the Europeean sample as a whole.
+
 
 
 ## File Structure
@@ -72,6 +74,8 @@ Across the three models, gender, education, household income, and political orie
 | 6 | Visualisation: tax + subsidy |
 | 7 | Visualisation: ban |
 | 8 | Discussion |
+| 9 | Limitations |
+
 
 
 ## Packages

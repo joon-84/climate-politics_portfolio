@@ -78,6 +78,14 @@ effects are either not statistically significant (residence, in the
 subsidy and ban models) or reversed in direction (age, in the ban
 model).
 
+It is also worth noting that the intercepts across the three models
+suggest that overall support for these policies is moderate at best:
+respondents lean toward opposing the tax policy, while subsidy and ban
+policies receive close to neutral levels of support on average. This
+indicates that even where certain socio-demographic and policial groups
+are more supportive than others, none of the three policies enjoys
+strong support across the Europeean sample as a whole.
+
 ## File Structure
 
 | Chunk | Content                         |
@@ -90,6 +98,7 @@ model).
 | 6     | Visualisation: tax + subsidy    |
 | 7     | Visualisation: ban              |
 | 8     | Discussion                      |
+| 9     | Limitations                     |
 
 ## Packages
 
