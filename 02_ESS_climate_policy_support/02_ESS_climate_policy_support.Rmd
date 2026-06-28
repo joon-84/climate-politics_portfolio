@@ -1,0 +1,174 @@
+---
+title: "climate policy support"
+author: "Junhui Park"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE)
+
+library(manifestoR)
+library(tidyverse)
+library(stargazer)
+library(here)
+library(readr)
+library(purrr)
+library(lme4)
+library(sjPlot)
+library(patchwork)
+```
+
+# data
+```{r data, results='hide'}
+
+portfolio_dir <- here::here("02_ESS_climate_policy_support")
+df <- read_csv(file.path(portfolio_dir, "data", "ESS8e02_3.csv"))
+
+head(df)
+
+df_sub <- df %>% 
+ dplyr::select(c(eisced, agea, domicil, hinctnta, lrscale, gndr, cntry, inctxff, sbsrnen, banhhap))
+
+table(df_sub$lrscale)
+
+map(df_sub, ~ sort(unique(.x)))
+
+table(df_sub$eisced)
+table(df_sub$domicil)
+
+group_5 <- c("domicil", "inctxff", "sbsrnen", "banhhap")
+group_10 <- c("hinctnta", "lrscale")
+group_2 <- "gndr"
+group_900 <- "agea"
+group_7 <- "eisced"
+
+df_clean <- df_sub %>%
+ mutate(
+  across(all_of(group_5), ~ if_else(.x > 5, NA, .x)),
+  across(all_of(group_10), ~ if_else(.x > 10, NA, .x)),
+  across(all_of(group_2), ~ if_else(.x > 2, NA, .x)),
+  across(all_of(group_900), ~ if_else(.x > 900, NA, .x)),
+  across(all_of(group_7), ~ if_else(.x > 7, NA, .x)))
+
+```
+
+# null model & ICC calculation
+```{r null model and ICC, results='hide'}
+# average DVs by country
+
+## inctxff (increasing taxes on fossil fuels)
+inctxff_avg <- df_clean %>%
+ group_by(cntry) %>%
+ summarise(mean = mean(inctxff, na.rm = TRUE)) %>%
+ ungroup()
+
+inctxff_avg
+summary(inctxff_avg$mean)
+
+null_model <- lmer(inctxff ~ (1|cntry), data = df_clean)
+summary(null_model)
+
+0.09307 / (0.09307 + 1.44339)
+
+## sbsrnen (subsidising renewable energy by using public money)
+sbsrnen_avg <- df_clean %>%
+ group_by(cntry) %>%
+ summarise(mean = mean(sbsrnen, na.rm = TRUE)) %>%
+ ungroup()
+
+null_model_2 <- lmer(sbsrnen ~ (1 | cntry), data = df_clean)
+summary(null_model_2)
+
+0.07093 / (0.07093 + 1.07535)
+
+## banhhap (banning the sale of the least energy efficient household appliances)
+banhhap_avg <- df_clean %>%
+ group_by(cntry) %>%
+ summarise(mean = mean(banhhap, na.rm = TRUE)) %>%
+ ungroup()
+
+null_model_3 <- lmer(banhhap ~ (1 | cntry), data = df_clean)
+summary(null_model_3)
+
+summary(banhhap_avg$mean)
+
+0.04797 / (0.04797 + 1.32487)
+```
+# MLR models
+```{r MLR models, results='hide'}
+# scale transformation in DVs
+dv_vars <- c("inctxff", "sbsrnen", "banhhap")
+df_final <- df_clean %>%
+ mutate(across(all_of(dv_vars), ~ 6 - .x))
+
+df_final <- df_final %>%
+ rename(country = cntry)
+
+table(df_clean$inctxff, df_final$inctxff, useNA = "always")
+
+
+# inctxff model
+model1 <- lmer(inctxff ~ gndr + eisced + agea + domicil + 
+                hinctnta + lrscale + (1 |country), data = df_final)
+summary(model1)
+
+# sbsrnen model
+model2 <- lmer(sbsrnen ~ gndr + eisced + agea + domicil + 
+                hinctnta + lrscale + (1 |country), data = df_final)
+summary(model2)
+
+# banhhap model
+model3 <- lmer(banhhap ~ gndr + eisced + agea + domicil + 
+                hinctnta + lrscale + (1 |country), data = df_final)
+summary(model3)
+```
+# model analysis
+```{r model analysis, results='asis'}
+pl <- c(
+ '(Intercept)' = "Intercept",
+ gndr = "Gender",
+ eisced = "Education",
+ agea = "Age",
+ domicil = "Residence (Urban-Rural)",
+ hinctnta = "Household Income",
+ lrscale = "Political Orientation (Left-Right)"
+)
+
+
+tab_model(model1, model2, model3,
+          pred.labels = pl,
+          dv.labels = c("Tax (inctxff)", "Subsidy (sbsrnen)", "Ban (banhhap)"))
+
+```
+
+# visualisation: tax + subsidy
+```{r visualisation}
+
+p1 <- plot_model(model1, type = "est",
+           axis.labels = pl,
+          title = "Tax (inctxff)")
+p2 <- plot_model(model2, type = "est",
+           axis.labels = pl,
+           title = "Subsidy (sbsrnen)")
+p1 + p2
+```
+
+# visualisation: ban
+```{r}
+plot_model(model3, type = "est",
+           axis.labels = pl,
+           title = "Ban (banhhap)")
+```
+
+# Discussion
+
+Respondents who consistently support all three regulatory climate policies tend to be: 1) female, 2) higher in educational attainment, 3) higher in household income, and 4) more left-leaning politically. The results are in line with the postmaterialism theory developed by Inglehart (1997, 1990). People with higher education and income levels tend to prefer postmaterial values, including environmental protection. Kriesi's (2006, 2008) studies, which conceptualised an axis of integration and demarcation, can further support the observations based on political orientation.
+
+In addition, younger respondents and urban residents are more likely to support the tax policy specifically, though these patterns do not hold consistently across the subsidy and ban policies. H1c (residence) is confirmed for the tax model, but respondents living in urban areas still show a positive estimate for the subsidy and ban policies, but these estimates are substantively small and not statistically significant. This can be explained by differences in lifestyle: people in rural areas tend to rely more heavily on fossil fuels (e.g. for transport and heating), meaning that an increase in fossil fuel taxes can directly raise their living costs. In contrast, urban residents can more easily benefit from environmentally-friendly infrastructure, making them less directly affected by such taxation. Therefore the urban-rural divide is most pronounced for the tax policy, where the cost is borne directly by the individual.
+
+H1b cannot be confirmed for the ban policy, as older respondents are more likely to support it. This may be explained by differences in consumption patterns between generations: younger respondents purchase new household appliances more frequently than older respondents, who tend to keep using appliances they already own for longer. As a result, a ban on selling inefficient appliances constrains the choices of younger consumers more directly, while older respondents - whose consumption of such goods is less frequent - are less affected and therefore more supportive.
+
+Overall, climate change appears to be a valence issue across Europe, but when it comes to climate policies with direct distributive effects, for instance, taxation, the level of support varies depending on socio-demographic and political characteristics within countries. The results are in line with a broad range of existing studies (Aklin and Mildenberger 2020; Halikiopoulou et al. 2026).
+
