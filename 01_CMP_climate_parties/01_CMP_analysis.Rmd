@@ -16,6 +16,8 @@ library(manifestoR)
 library(tidyverse)
 library(stargazer)
 library(plm)
+library(sandwich)
+library(lmtest)
 mp_setapikey(key.file = "~/.manifesto/manifesto_apikey")
 ```
 
@@ -135,17 +137,46 @@ summary(model2)
 model3 <- lm(per501 ~ year + parfam_label + countryname, country_parfam_label)
 summary(model3)
 
-
 ```
 # 5.1. OLS analysis results
 ```{r, results='asis'}
-stargazer(model1, model2, model3, 
+stargazer(model1, model2, model3,
           type = "html",
           title = "Regression Results: Determinants of Environmental Protection Manifesto",
           dep.var.labels = "Environmental Protection (per501)",
-          covariate.labels = c("Year", "CHR", "CON", "ECO", "SOC", 
+          covariate.labels = c("Year", "CHR", "CON", "ECO", "SOC",
                                "France", "Germany", "Sweden"))
 ```
+
+# 5.2. OLS Assumption Diagnostics
+```{r, fig.width=8, fig.height=8}
+par(mfrow = c(2, 2))
+plot(model3)
+par(mfrow = c(1, 1))
+```
+
+The diagnostic plots for `model3` show no dominant high-leverage observations (Residuals vs Leverage) and an approximately normal distribution of residuals with only minor departure at the tails (Normal Q-Q), which is not a concern given the sample size. The Residuals vs Fitted plot, however, indicates heteroscedasticity: residual variance is visibly larger for the ECO party family (the cluster of fitted values around 15-20) than for the other party families.
+
+To address this, heteroscedasticity-consistent (HC1) standard errors are computed using the `sandwich` and `lmtest` packages and compared against the classical OLS standard errors below.
+
+```{r, results='hide'}
+robust_se <- sqrt(diag(vcovHC(model3, type = "HC1")))
+coeftest(model3, vcov = vcovHC(model3, type = "HC1"))
+```
+
+```{r, results='asis'}
+stargazer(model3, model3,
+          type = "html",
+          title = "Model 3: Classical vs. Heteroscedasticity-Robust Standard Errors",
+          se = list(NULL, robust_se),
+          column.labels = c("Classical SE", "Robust SE (HC1)"),
+          dep.var.labels = "Environmental Protection (per501)",
+          covariate.labels = c("Year", "CHR", "CON", "ECO", "SOC",
+                               "France", "Germany", "Sweden"),
+          notes = "Robust standard errors computed via the HC1 estimator (sandwich package).")
+```
+
+Coefficient estimates are unchanged under the robust specification, as expected. Standard errors shift in the direction predicted by the residual plot: the ECO standard error increases by roughly 29% (1.10 to 1.42), reflecting its larger residual variance, while most other standard errors decrease slightly. Notably, the CHR coefficient crosses the conventional significance threshold — from p = .117 (classical) to p = .028 (robust) — a result that should therefore be interpreted with caution rather than treated with the same confidence as the ECO and Sweden findings, which remain significant at p < .001 under both specifications.
 
 
 # 6. Fixed effects
@@ -158,7 +189,21 @@ model_fe <- plm(per501 ~ year,
 summary(model_fe)
 
 ```
-# 6.1. OLS and fixed-effects analysis
+
+# 6.1. Hausman Test: Fixed Effects vs. Random Effects
+```{r, results='hide'}
+model_re <- plm(per501 ~ year,
+                data = country_parfam_label,
+                index = c("partyname"),
+                model = "random")
+summary(model_re)
+
+phtest(model_fe, model_re)
+```
+
+The Hausman test compares the Fixed-Effects and Random-Effects estimators of the `year` coefficient. The null hypothesis is that the unobserved, time-invariant party characteristics absorbed by the Fixed-Effects model are uncorrelated with `year` — in which case the more efficient Random-Effects estimator would be preferred. The test returns chi-squared = 5.96 (df = 1), p = 0.015, leading to rejection of the null hypothesis at the 5% level. This indicates that the Random-Effects assumption does not hold in this data — the unobserved party characteristics are plausibly correlated with a party's trajectory over time (e.g. ideological history, organisational culture) — and the Fixed-Effects model is therefore the statistically justified choice, not merely a theoretically preferred default.
+
+# 6.2. OLS and fixed-effects analysis
 ```{r, results='asis'}
 stargazer(model3, model_fe, type = "html",
           title = "Regression Results: Determinants of Environmental Protection Manifesto",
@@ -178,6 +223,8 @@ The time-series data by party family provides a more fine-grained picture. In We
 
 These figures suggest that Green parties emerged earlier in Sweden and secured more prominent positions within the party system compared to other countries. The stronger the presence of Green parties in party systems, the higher the overall environmental protection manifesto scores tend to be. The results of a multiple OLS regression analysis are broadly consistent with these patterns. More specifically, per501 scores for ECO party family and Sweden are higher by 14.10 and 2.66 respectively, and both are statistically significant at p < .001, relative to NAT parties and the United Kingdom. 
 
-Following a multiple OLS regression analysis, the analysis conducted a fixed-effects regression analysis, given the OLS analysis does not account for unobserved time-invariant characteristics of political parties. The fixed-effects regression analysis has shown that per501 score increases by 0.037 across time, absorbing unobserved time-invariant party-level characteristics. As a result, the coefficient of year (0.0523) in the OLS analysis is likely to be overestimated and the coefficient decreased to 0.0374 in the fixed-effects model. The results of the fixed-effects model are statistically significant at p < .01.
+Following a multiple OLS regression analysis, the analysis conducted a fixed-effects regression analysis, given the OLS analysis does not account for unobserved time-invariant characteristics of political parties. The choice of Fixed Effects over the more efficient Random-Effects alternative is supported by a Hausman test (Section 6.1), which rejects the null hypothesis that unobserved party characteristics are uncorrelated with `year` (chi-squared = 5.96, df = 1, p = .015) — indicating that the Random-Effects assumption does not hold and that Fixed Effects is the statistically appropriate model, not merely the more conservative default. The fixed-effects regression analysis has shown that per501 score increases by 0.037 across time, absorbing unobserved time-invariant party-level characteristics. As a result, the coefficient of year (0.0523) in the OLS analysis is likely to be overestimated and the coefficient decreased to 0.0374 in the fixed-effects model. The results of the fixed-effects model are statistically significant at p < .01.
 
 However, this analysis is not without limitation. The variable selection, limited to country and party family, captures only a small portion of variation in environmental protection manifesto scores. Furthermore, high scores among Green parties do not necessarily imply that other party families neglect environmental issues in their programmes. Party competition dynamics warrant further consideration. A substantial body of research on party competition has demonstrated that mainstream and challenger parties tend to mobilise issues outside their traditional agendas when facing electoral threats or opportunities, a dynamic that may also shape environmental manifesto commitments.
+
+Diagnostic checks of `model3` (Section 5.2) further show that the OLS assumption of homoscedasticity does not hold: residual variance is visibly larger for the ECO party family than for other groups, likely because the ECO family's manifesto scores are both higher on average and more heterogeneous across parties and countries. Heteroscedasticity-consistent (HC1) standard errors were therefore used to re-assess statistical significance. While the ECO and Sweden coefficients remain robust under this correction, the CHR coefficient crosses the conventional significance threshold depending on the standard error specification (p = .117 classical vs. p = .028 robust) and should accordingly be treated as a tentative, rather than confirmed, finding. No evidence of dominant high-leverage outliers or serious non-normality was found.

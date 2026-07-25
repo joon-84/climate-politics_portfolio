@@ -55,6 +55,13 @@ unobserved time-invariant party characteristics. A fixed-effects model
 absorbs such variables, producing less biased estimates of the time
 effect.
 
+**Hausman test** The choice between Fixed Effects and the more
+efficient Random-Effects alternative is not made by default — it is
+tested. The Hausman test evaluates whether unobserved, time-invariant
+party characteristics are correlated with the model's predictors; if
+they are, Random Effects is biased and Fixed Effects is the
+statistically appropriate choice.
+
 ## Results
 
 The time-series analysis by party family reveals important
@@ -90,6 +97,42 @@ increase by 0.037 per year (p \< .01). The OLS coefficient for year
 fixed-effects model, suggesting that unobserved party-level
 heterogeneity partially accounts for the OLS estimate.
 
+The choice of Fixed Effects over Random Effects is supported by a
+Hausman test (chi-squared = 5.96, df = 1, p = .015), which rejects the
+null hypothesis that unobserved party characteristics are uncorrelated
+with `year`. This indicates the Random-Effects assumption does not
+hold in this data, and confirms Fixed Effects as the statistically
+justified model rather than a conservative default.
+
+## Limitations
+
+**OLS assumption diagnostics.** Residual diagnostics for `model3`
+(Residuals vs Fitted, Normal Q-Q, Residuals vs Leverage) indicate no
+dominant high-leverage outliers and only minor, sample-size-tolerable
+departure from normality. However, the model violates the
+homoscedasticity assumption: residual variance is visibly larger for
+the ECO party family than for other groups, plausibly because ECO
+manifesto scores are both higher on average and more heterogeneous
+across parties and countries. Heteroscedasticity-consistent (HC1)
+standard errors were computed as a correction. Under this correction,
+the ECO and Sweden coefficients remain statistically significant at
+p \< .001, but the CHR coefficient crosses the conventional
+significance threshold depending on specification (p = .117 classical
+vs. p = .028 robust) and should therefore be read as a tentative
+rather than confirmed finding.
+
+**Variable coverage.** The model's predictors (party family and
+country) capture only a small portion of the variation in
+environmental protection manifesto scores. Party competition dynamics
+— such as mainstream and challenger parties strategically mobilising
+issues outside their traditional agendas — are not modelled directly
+and warrant further consideration.
+
+**Panel structure.** Because the data include repeated observations
+per party over time, the independence-of-errors assumption of OLS is
+unlikely to hold; this is a central motivation for the fixed-effects
+analysis reported above, rather than a separate unresolved issue.
+
 ## File Structure
 
 | Chunk | Content                          |
@@ -100,8 +143,10 @@ heterogeneity partially accounts for the OLS estimate.
 | 4     | Visualisation                    |
 | 5     | OLS Regression                   |
 | 5.1   | OLS Regression results           |
+| 5.2   | OLS assumption diagnostics (residual plots, robust standard errors) |
 | 6     | Fixed-Effects model              |
-| 6.1   | OLS and Fixed-Effects comparison |
+| 6.1   | Hausman test (Fixed Effects vs. Random Effects) |
+| 6.2   | OLS and Fixed-Effects comparison |
 | 7     | Discussion                       |
 
 ## Packages
@@ -111,6 +156,8 @@ heterogeneity partially accounts for the OLS estimate.
 - `ggplot2`
 - `stargazer`
 - `plm`
+- `sandwich`
+- `lmtest`
 
 ## Note
 
