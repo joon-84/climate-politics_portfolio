@@ -13,7 +13,7 @@ policies across Europe between 2016 and 2017 using the ESS data (ESS8).
 
 ## Research Question and Hypotheses
 
-**Research question:** How do socioa-demographic and political
+**Research question:** How do socio-demographic and political
 characteristics influence the level of support for regulatory climate
 policies?
 
