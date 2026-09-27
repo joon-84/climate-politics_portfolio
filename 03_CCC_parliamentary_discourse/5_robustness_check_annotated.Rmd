@@ -1,0 +1,485 @@
+---
+title: "robustness check_temporal pattern and yearly trend with original & stricter dictionary"
+author: "Junhui Park"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## Input and corpus version
+The main climate-policy corpus is constructed using word-boundary keyword matching. This file compares the original CCC policy-theme dictionary with a stricter dictionary specification. The stricter dictionary removes selected keywords with lower contextual validity and is used only for robustness checks.
+
+## Robustness specification
+This file uses a stricter matching strategy and/or stricter dictionary specification.
+These results are used as robustness checks and do not replace the main analysis.
+
+## Workflow note
+This document checks whether the period-level and yearly salience patterns depend on the specification of the CCC policy-theme dictionary. It reconstructs the corpus, applies the original and stricter keyword sets, and compares their matched proportions over time. Differences between specifications indicate sensitivity to keyword coverage and matching decisions; they are not independent estimates of a causal CCC effect. All original code is preserved.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE)
+# Load the packages and establish the options used by subsequent chunks. Reproducibility depends on the stated package versions, local input files and working environment.
+
+# libraries
+library(xml2)
+library(dplyr)
+library(tidyverse)
+library(stringr)
+library(purrr)
+library(tibble)
+library(ggplot2)
+
+# global options
+options(stringsAsFactors = FALSE)
+
+# reproductibility
+set.seed(123)
+
+# knitr options
+knitr::opts_chunk$set(
+ echo = TRUE,
+ warning = FALSE,
+ message = FALSE)
+```
+
+## helper function
+```{r helper function}
+# Carry out the 'helper function' step and inspect its output before proceeding. This chunk forms part of the documented workflow; its results have not been independently re-run here.
+# Create one combined word-boundary regex pattern from a keyword vector
+
+make_pattern <- function(keywords) {
+  
+  pattern <- paste(
+    keywords,
+    collapse = "|"
+  )
+  
+  pattern <- paste0(
+    "\\b(",
+    pattern,
+    ")\\b"
+  )
+  
+  return(pattern)
+}
+```
+
+## loading data and parsing
+```{r data loading and parsing, results='hide'}
+# Load the input data and construct the objects required by subsequent processing steps.
+
+all_files <- list.files("xml_folder_path",
+                    pattern = "\\.xml$",
+                    full.names = TRUE)
+
+parse_one_xml <- function(file_path) {
+ doc <- read_xml(file_path)
+ xml_ns_strip(doc)
+ 
+ if (length(xml_find_all(doc, ".//paragraphe")) > 0) {
+  nodes <- xml_find_all(doc, ".//paragraphe")
+  tag_used <- "paragraphe"
+ } else if (length(xml_find_all(doc, ".//para")) > 0) {
+  nodes <- xml_find_all(doc, ".//para")
+  tag_used <- "para"
+ } else if (length(xml_find_all(doc, ".//texte")) > 0) {
+  nodes <- xml_find_all(doc, ".//texte")
+  tag_used <- "texte"
+ } else {
+  return(tibble(
+         file = basename(file_path),
+         tag_used = NA_character_,
+         speech_text = NA_character_
+         ))
+ }
+ 
+tibble(
+ file = basename(file_path),
+ tag_used = tag_used,
+ speech_text = xml_text(nodes)
+) %>%
+ mutate(
+  speech_text = str_remove_all(speech_text, "\\d+"),
+  speech_text = str_remove_all(speech_text, "\\([^\\)]+\\)"),
+  speech_text = str_remove_all(speech_text, "La parole est à.*?(\\.|$)"),
+  speech_text = str_remove_all(speech_text, "La séance est.*?(\\.|$)"),
+  speech_text = str_squish(speech_text)
+ ) %>%
+ filter(!is.na(speech_text), speech_text != "")
+}
+
+df_full <- map_dfr(all_files, parse_one_xml)
+
+```
+
+## add year and period
+```{r periodisation}
+# Calculate or display the year-specific results to assess temporal variation beyond the aggregated period comparison.
+
+df_full <- df_full %>%
+ mutate(
+  year = stringr::str_extract(file, "20\\d{2}") %>%
+   as.numeric(),
+  period = case_when(
+   year %in% 2017:2019 ~ "pre",
+   year == 2020 ~ "transition",
+   year %in% 2021:2022 ~ "post",
+   TRUE ~ NA_character_
+ )
+) %>%
+ filter(year %in% 2017:2022)
+
+table(df_full$period, useNA = "ifany")
+
+dim(df_full)
+table(df_full$year)
+table(df_full$period, useNA = "ifany")
+```
+
+## climate-policy keywords
+```{r climate-policy keywords}
+# Define, combine or inspect the keyword set used in the subsequent matching step. Keyword selection determines the breadth of the resulting indicator.
+
+climate_keywords <- c(
+ "climat", "climatique",
+ "environnement", "écologie",
+ "transition écologique",
+ "transition énergétique",
+ "émissions",
+ "carbone",
+ "pollution",
+ "fiscalité carbone",
+ "pesticides",
+ "déchets",
+ "recyclage",
+ "passoires énergétiques",
+ "neutralité carbone",
+ "empreinte carbone",
+ "énergies renouvelables",
+ "sobriété énergétique",
+ "rénovation énergétique",
+ "efficacité énergétique",
+ "économie circulaire",
+ "zéro artificialisation nette",
+ "transition juste",
+ "report modal",
+ "covoiturage",
+ "alimentation durable",
+ "engrais minéraux azotés",
+ "sortie du pétrole"
+ )
+
+climate_pattern <- make_pattern(climate_keywords)
+
+df_climate <- df_full %>%
+ mutate(
+  text_lower = str_to_lower(speech_text),
+  climate_match = str_detect(
+   text_lower,
+   regex(climate_pattern, ignore_case = TRUE)
+  )
+ ) %>%
+ filter(climate_match == TRUE)
+
+```
+
+## original dictionary
+```{r original dictionary}
+# Define, combine or inspect the keyword set used in the subsequent matching step. Keyword selection determines the breadth of the resulting indicator.
+
+consumption_keywords <- c(
+ "surconsommation",
+  "emballage",
+  "plastique à usage unique", 
+  "suremballage", 
+ "publicité",
+  "consommation responsable", 
+  "affichage environnemental",
+  "affichage carbone",
+  "écoresponsables",
+  "écoresponsabilité",
+  "produits polluants",
+  "produits vertueux", 
+  "économie circulaire",
+  "déchets d'emballage",
+  "utilisation du plastique",
+  "vrac",
+ "recyclage",
+  "réutilisable",
+  "contenants réutilisables",
+  "bouteilles plastiques",
+  "réduction des déchets",
+  "matériaux biodégradables",
+  "réemploi")
+
+production_keywords <- c(
+ "produits durables",
+  "écoconception",
+  "longévité des produits", 
+  "investissements verts",
+  "clauses environnementales",
+  "droit pollueur-payeur", 
+  "filières émettrices", 
+  "écocide",
+  "produits micropolluants",
+  "énergie verte",
+  "énergies renouvelables",
+  "méthanisation",
+  "autoconsommation",
+  "écolabels",
+  "énergie décarbonée"
+)
+
+mobility_keywords <- c(
+ "mobilité durable",
+  "véhicules faibles émissions",
+  "mobilités douces",
+  "véhicules partagés",
+  "mobilités alternatives",
+  "zones de faible émission",
+  "pistes cyclables",
+  "véhicules électriques",
+  "véhicules hybrides",
+  "émissions du véhicule",
+  "écoconduite",
+  "multimodalité",
+  "moteur éthanol",
+  "moteur électrique",
+  "moteur thermique",
+  "covoiturage",
+  "biocarburants"
+)
+
+housing_keywords <- c(
+ "construction bas carbone",
+  "performance énergétique", 
+  "rénovation globale",
+  "chaudières au fioul",
+  "passoires énergétiques",
+  "bâtiments énergivores", 
+  "audit énergétique",
+  "certificats d'économies d'énergie", 
+  "déperditions de chaleur",
+ "climatisation",
+  "chauffage au fioul"
+)
+
+food_keywords <- c(
+ "alimentaire durable",
+  "EGalim",
+  "repas végétariens",
+  "restauration collective",
+  "faible coût environnemental",
+  "transition vers le bio",
+  "gaspillage alimentaire",
+  "pratiques agroécologiques",
+  "agroécologie",
+  "réduction des pesticides",
+  "agriculture biologique",
+  "plan protéagineux",
+  "prairies permanentes",
+  "reconversion de l'élevage",
+  "développement des légumineuses",
+  "rediversifier les cultures",
+  "engrais chimiques",
+  "couvert végétal",
+  "élevages de ruminants",
+  "ecoscheme",
+  "pêche durable",
+  "surpêche",
+  "propulsion verte",
+  "clauses environnementales",
+  "consommation de viande",
+  "régime moins carné"
+)
+
+constitution_keywords <- c(
+ "crime d'écocide",
+  "érosion de la biodiversité",
+  "utilisation des sols",
+  "pollution chimique",
+  "dommage écologique",
+  "préjudice écologique"
+)
+
+original_dict <- unique(c(
+ consumption_keywords,
+ production_keywords,
+ mobility_keywords,
+ housing_keywords,
+ food_keywords,
+ constitution_keywords
+))
+
+
+```
+
+### stricter dictionary
+```{r stricter dictionary}
+# Define, combine or inspect the keyword set used in the subsequent matching step. Keyword selection determines the breadth of the resulting indicator.
+
+removed_keywords <- c(
+ "publicité",
+ "recyclage",
+ "climatisation"
+)
+
+strict_dict <- original_dict[
+ !original_dict %in% removed_keywords
+]
+```
+
+## match both dictionaries
+```{r match both dictionaries}
+# Apply the specified terms to speech texts and create the corresponding match indicator or subset. Verify the unit of analysis before interpreting the resulting counts.
+
+original_pattern <- make_pattern(original_dict)
+strict_pattern <- make_pattern(strict_dict)
+
+df_policy_versions <- df_climate %>%
+ mutate(
+  text_lower = str_to_lower(speech_text),
+  
+  original_match = str_detect(
+   text_lower,
+   regex(original_pattern, ignore_case = TRUE)
+  ),
+  
+  strict_match = str_detect(
+   text_lower,
+   regex(strict_pattern, ignore_case = TRUE)
+  )
+ )
+```
+
+## period-level ratio: original vs stricter
+```{r period-level ratio}
+# Calculate or display the relevant period-level proportions. The interpretation depends on the numerator, denominator and dictionary specification used in this chunk.
+
+period_ratio <- df_policy_versions %>%
+ group_by(period) %>%
+ summarise(
+  climate_total = n(),
+  
+  original_raw_count = sum(original_match, na.rm = TRUE),
+  strict_raw_count = sum(strict_match, na.rm = TRUE),
+  .groups = "drop"
+ ) %>%
+ mutate(
+  original_proportion = original_raw_count / climate_total,
+  strict_proportion = strict_raw_count / climate_total,
+  original_percentage = round(original_proportion * 100, 2),
+  strict_percentage = round(strict_proportion * 100, 2),
+  original_proportion = round(original_proportion, 3),
+  strict_proportion = round(strict_proportion, 3),
+  period = factor(period, levels = c("pre", "transition", "post")),
+ ) %>%
+ arrange(period)
+ 
+write.csv(period_ratio, "period_ratio_original_vs_strict.csv", row.names = FALSE)
+```
+
+## visualisation
+```{r visualisation_period}
+# Produce the figure for the preceding analysis. Check the axis labels, denominator and time grouping against the data object used in this chunk.
+
+period_ratio_long <- period_ratio %>%
+ select(period, original_proportion, strict_proportion) %>%
+ pivot_longer(
+  cols = c(original_proportion, strict_proportion),
+  names_to = "dictionary",
+  values_to = "proportion"
+ ) %>%
+ mutate(
+  dictionary = recode(
+   dictionary,
+   original_proportion = "Original dictionary",
+   strict_proportion = "Strict dictionary"
+  )
+ )
+
+ggplot(
+ period_ratio_long, aes(x = period, y = proportion,
+                        group = dictionary, linetype = dictionary)
+) +
+ geom_line(size = 1) +
+ geom_point(size = 2) +
+ labs(
+  title = "CCC policy-theme salience across periods by dictionary specification",
+  x = "Period",
+  y = "Proportion within climate-policy interventions",
+  linetype = "Dictionary"
+ ) +
+ theme_minimal()
+
+ggsave(
+ "period_ratio_original_vs_strict.pdf",
+ width = 8,
+ height = 5
+)
+```
+
+## yearly trend: original vs stricter
+```{r yearly trend}
+# Calculate or display the year-specific results to assess temporal variation beyond the aggregated period comparison.
+
+yearly_ratio <- df_policy_versions %>%
+ group_by(year) %>%
+ summarise(
+  climate_total = n(),
+  original_raw_count = sum(original_match, na.rm = TRUE),
+  strict_raw_count = sum(strict_match, na.rm = TRUE),
+  .groups = "drop"
+ ) %>%
+ mutate(
+  original_proportion = original_raw_count / climate_total,
+  strict_proportion = strict_raw_count / climate_total,
+  original_percentage = round(original_proportion * 100, 2),
+  strict_percentage = round(strict_proportion * 100, 2),
+  original_proportion = round(original_proportion, 2),
+  strict_proportion = round(strict_proportion, 2)
+ )
+
+write.csv(yearly_ratio, "yearly_ratio_original_vs_stricter.csv", row.names = FALSE)
+```
+
+## visualisation
+```{r visualisation_yearly}
+# Produce the figure for the preceding analysis. Check the axis labels, denominator and time grouping against the data object used in this chunk.
+
+yearly_ratio_long <- yearly_ratio %>%
+ select(year, original_proportion, strict_proportion) %>%
+ pivot_longer(
+  cols = c(original_proportion, strict_proportion),
+  names_to = "dictionary",
+  values_to = "proportion"
+ ) %>%
+ mutate(
+  dictionary = recode(
+   dictionary,
+   original_proportion = "Original dictionary",
+   strict_proportion = "Stricter dictionary"
+  )
+ )
+
+ggplot(
+ yearly_ratio_long, aes(x = year, y = proportion, group = dictionary, linetype = dictionary)
+) +
+ geom_line(size = 1) +
+ geom_point(size = 2) +
+ scale_x_continuous(breaks = 2017:2022) +
+ labs(
+  title = "Yearly trend of CCC policy-theme salience by dictionary specification",
+  x = "Year",
+  y = "Proportion within climate-policy interventions",
+  linetype = "Dictionary"
+ ) +
+ theme_minimal()
+
+ggsave(
+ "yearly_ratio_original_vs_strict.pdf",
+ width = 8,
+ height = 5
+)
+```
+

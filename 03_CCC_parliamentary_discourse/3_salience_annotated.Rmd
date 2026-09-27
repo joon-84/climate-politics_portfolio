@@ -1,0 +1,856 @@
+---
+title: "Salience analysis"
+author: "Junhui Park"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## Purpose
+This file measures the salience of the CCC in parliamentary climate-policy debates.
+
+## Analytical scope
+Two forms of salience are examined:
+(1) Explicit references to the CCC
+(2) References to the CCC policy themes
+
+## Corpus
+The analysis uses the climate-policy corpus constructed in 1_full_corpus_annotated.Rmd. The climate-policy corpus contains 21,776 speeches and is based on word-boundary keyword matching.
+
+## Analytical strategy
+Salience is measured as the proportion of climate-policy speeches containing:
+- explicit CCC references, or
+- CCC policy-theme references.
+Salience is examined at two levels:
+- period level (pre, transition, post),
+- yearly level (2017-2022).
+
+## Important decisions
+- Word-boundary matching is used throughout the analysis.
+- The original CCC policy-theme dictionary is used for the main analysis.
+- The stricter dictionary specification is reserved for robustness checks.
+
+
+## Workflow note
+This document measures the salience of explicit CCC references and CCC-related policy themes in parliamentary climate-policy speeches. It reconstructs the relevant corpus and dictionaries, compares counts and proportions across periods and years, and produces the corresponding visualisations. Explicit institutional references and broader thematic references are distinct indicators; changes in the latter cannot, by themselves, be attributed causally to the CCC. The code is unchanged and the notes do not imply that the analysis has been re-run.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE)
+# Load the packages and establish the options used by subsequent chunks. Reproducibility depends on the stated package versions, local input files and working environment.
+
+# libraries
+library(xml2)
+library(dplyr)
+library(tidyverse)
+library(stringr)
+library(purrr)
+library(tibble)
+library(openxlsx)
+
+# global options
+options(stringsAsFactors = FALSE)
+
+# reproductibility
+set.seed(123)
+
+# knitr options
+knitr::opts_chunk$set(
+ echo = TRUE,
+ warning = FALSE,
+ message = FALSE)
+```
+
+---
+
+# Data loading
+```{r data loading, results='hide'}
+# Read the parliamentary source files into R. The resulting objects provide the input for the extraction and filtering steps below.
+
+all_files <- list.files("xml_folder_path",
+                    pattern = "\\.xml$",
+                    full.names = TRUE)
+
+length(all_files)
+head(all_files, 5)
+
+test_file <- all_files[1]
+test_file
+
+```
+---
+
+# Parsing
+```{r parsing}
+# Extract speech text and relevant metadata from the XML structure, applying the cleaning operations specified in the code. Subsequent counts depend on the unit of text produced here.
+
+parse_one_xml <- function(file_path) {
+ doc <- read_xml(file_path)
+ xml_ns_strip(doc)
+ 
+ if (length(xml_find_all(doc, ".//paragraphe")) > 0) {
+  nodes <- xml_find_all(doc, ".//paragraphe")
+  tag_used <- "paragraphe"
+ } else if (length(xml_find_all(doc, ".//para")) > 0) {
+  nodes <- xml_find_all(doc, ".//para")
+  tag_used <- "para"
+ } else if (length(xml_find_all(doc, ".//texte")) > 0) {
+  nodes <- xml_find_all(doc, ".//texte")
+  tag_used <- "texte"
+ } else {
+  return(tibble(
+         file = basename(file_path),
+         tag_used = NA_character_,
+         speech_text = NA_character_
+         ))
+ }
+ 
+tibble(
+ file = basename(file_path),
+ tag_used = tag_used,
+ speech_text = xml_text(nodes)
+) %>%
+ mutate(
+  speech_text = str_remove_all(speech_text, "\\d+"),
+  speech_text = str_remove_all(speech_text, "\\([^\\)]+\\)"),
+  speech_text = str_remove_all(speech_text, "La parole est à.*?(\\.|$)"),
+  speech_text = str_remove_all(speech_text, "La séance est.*?(\\.|$)"),
+  speech_text = str_squish(speech_text)
+ ) %>%
+ filter(!is.na(speech_text), speech_text != "")
+}
+
+```
+
+---
+
+# Full corpus building
+```{r full corpus building, results='hide'}
+# Construct or inspect the working speech corpus and its analytical subsets.
+
+df_full <- map_dfr(all_files, parse_one_xml)
+
+dim(df_full)
+head(df_full, 10)
+table(df_full$tag_used, useNA = "ifany")
+
+df_full <- df_full %>%
+ filter(!is.na(speech_text), speech_text != "")
+```
+---
+
+# Temporal variables
+```{r temporal variables}
+# Derive the year and analytical period used in subsequent comparisons. The transition year is treated separately where specified in the code.
+
+df_full <- df_full %>%
+ mutate(
+  year = stringr::str_extract(file, "20\\d{2}") %>%
+   as.numeric(),
+  period = case_when(
+   year %in% 2017:2019 ~ "pre",
+   year == 2020 ~ "transition",
+   year %in% 2021:2022 ~ "post",
+   TRUE ~ NA_character_
+ )
+) %>%
+ filter(year %in% 2017:2022)
+```
+
+---
+
+# Climate-policy keywords
+```{r climate-policy keywords}
+# Specify the general climate-policy search terms. These terms delimit the broader debate corpus for the later CCC-related analyses.
+
+
+climate_keywords <- c(
+ "climat", "climatique",
+ "environnement", "écologie",
+ "transition écologique",
+ "transition énergétique",
+ "émissions",
+ "carbone",
+ "pollution",
+ "fiscalité carbone",
+ "pesticides",
+ "déchets",
+ "recyclage",
+ "passoires énergétiques",
+ "neutralité carbone",
+ "empreinte carbone",
+ "énergies renouvelables",
+ "sobriété énergétique",
+ "rénovation énergétique",
+ "efficacité énergétique",
+ "économie circulaire",
+ "zéro artificialisation nette",
+ "transition juste",
+ "report modal",
+ "covoiturage",
+ "alimentation durable",
+ "engrais minéraux azotés",
+ "sortie du pétrole"
+ )
+
+```
+
+---
+
+# Climate-policy subset building
+Construct the climate-policy corpus using word-boundary keyword matching. This corpus constitutes the analytical basis for all subsequent salience calculations.
+```{r climate-policy subset}
+# Select speech texts matching the general climate-policy dictionary. This subset supplies the reference population for subsequent proportions.
+
+
+climate_pattern <- regex(
+ paste0("\\b(", paste(climate_keywords, collapse = "|"), ")\\b"), ignore_case = TRUE
+)
+
+df_climate <- df_full %>%
+ filter(str_detect(speech_text, climate_pattern))
+
+dim(df_climate)
+nrow(df_climate) / nrow(df_full)
+
+df_climate %>%
+ count(period) %>%
+ mutate(ratio = n / sum(n))
+```
+---
+
+# Sample texts inspection
+```{r sample texts inspection}
+# Inspect selected matched speeches to assess whether the dictionary captures substantively relevant uses and to identify potential false positives.
+
+set.seed(123)
+
+sample_climate_policy <- df_climate %>%
+ slice_sample(n = min(5, nrow(df_climate))) %>%
+ mutate(id = row_number())
+
+textfile <- capture.output({
+for(i in seq_len(nrow(sample_climate_policy))) {
+ cat("\n\n=====================\n")
+ cat("ID:", sample_climate_policy$id[i],"\n")
+ cat("YEAR:", sample_climate_policy$year[i],"\n")
+ cat("PERIOD:", sample_climate_policy$period[i], "\n\n")
+ cat(sample_climate_policy$speech_text[i])
+ cat("\n")
+ }
+})
+
+writeLines(textfile, "rev_climate_policy_manual_inspection.txt")
+```
+
+---
+
+# Checking matched keywords
+```{r matched keywords, results='hide'}
+# Define, combine or inspect the keyword set used in the subsequent matching step. Keyword selection determines the breadth of the resulting indicator.
+
+sample_text <- sample_climate_policy %>%
+ filter(id == 5) %>%
+ pull(speech_text)
+
+matches <- sapply(climate_keywords, function(keyword) {
+ str_detect(sample_text, fixed(keyword, ignore_case = TRUE))
+})
+
+matched_phrases <- climate_keywords[matches]
+
+matched_phrases
+
+data.frame(
+ keyword = climate_keywords,
+ matched = matches
+) %>%
+ filter(matched == TRUE)
+
+```
+
+---
+
+# Explicit CCC dictionary
+Identify speeches containing explicit references to the CCC. The dictionary captures direct references to the Convention.
+```{r explicit ccc}
+# Define, combine or inspect the keyword set used in the subsequent matching step. Keyword selection determines the breadth of the resulting indicator.
+
+
+ccc_explicit <- c(
+ "convention citoyenne",
+ "convention citoyenne pour le climat",
+ "convention citoyenne sur le climat",
+ "conventions citoyennes",
+ "citoyens de la convention",
+ "citoyens tirés au sort",
+ "150 citoyens"
+ )
+
+```
+
+---
+
+# Explicit CCC subset building
+```{r explicit CCC subset}
+# Identify speeches containing explicit CCC reference terms and retain the relevant matching information for later checks or comparisons.
+
+
+explicit_ccc_pattern <- regex(
+ paste0(
+  "\\b(",
+  paste(ccc_explicit, collapse = "|"),
+  ")\\b"
+ ),
+ ignore_case = TRUE
+)
+
+df_ccc_explicit <- df_climate %>%
+ filter(
+  str_detect(
+   speech_text,
+   explicit_ccc_pattern
+  )
+ )
+
+dim(df_ccc_explicit)
+nrow(df_ccc_explicit) / nrow(df_climate)
+table(df_ccc_explicit$period, useNA = "ifany")
+
+df_ccc_explicit %>%
+ count(period) %>%
+ mutate(ratio = n / sum(n))
+
+```
+
+# Salience comparison check
+```{r salience comparison check}
+# Inspect intermediate results for coverage, plausible matches and potential noise. This is a diagnostic step rather than a separate inferential test.
+
+df_ccc_explicit %>%
+ count(period) %>%
+ left_join(df_climate %>% count(period), by = "period",
+           suffix = c("_ccc_explicit", "_climate")) %>%
+ mutate(ratio = round(n_ccc_explicit / n_climate, 3),
+        proportion = round(n_ccc_explicit / n_climate * 100, 2))
+```
+
+---
+
+# Explicit CCC results check
+```{r results check for explicit CCC}
+# Inspect intermediate results for coverage, plausible matches and potential noise. This is a diagnostic step rather than a separate inferential test.
+
+set.seed(123)
+
+sample_ccc_explicit <- df_ccc_explicit %>%
+ slice_sample(n = min(10, nrow(df_ccc_explicit))) %>%
+ mutate(id = row_number())
+
+textfile <- capture.output({
+for(i in seq_len(nrow(sample_ccc_explicit))) {
+ cat("\n\n=====================\n")
+ cat("ID:", sample_ccc_explicit$id[i],"\n")
+ cat("YEAR:", sample_ccc_explicit$year[i],"\n")
+ cat("PERIOD:", sample_ccc_explicit$period[i], "\n\n")
+ cat(sample_ccc_explicit$speech_text[i])
+ cat("\n")
+ }
+})
+
+writeLines(textfile, "rev_ccc_explicit_manual_inspection.txt")
+```
+
+---
+
+# CCC policy cluster keywords
+Identify speeches containing references to policy themes associated with the CCC. The dictionary is organised into six thematic clusters derived from the CCC final report.
+
+## (1) consumption
+```{r consumption}
+# Define or inspect the consumption-cluster keyword set. The subsequent matching step treats these terms as indicators of thematic overlap, not proof of an explicit CCC reference.
+
+consumption <- c(
+  "surconsommation",
+  "emballage",
+  "plastique à usage unique", 
+  "publicité", 
+  "suremballage", 
+  "consommation responsable", 
+  "affichage environnemental",
+  "affichage carbone",
+  "écoresponsables",
+  "écoresponsabilité",
+  "produits polluants",
+  "produits vertueux", 
+  "recyclage",
+  "économie circulaire",
+  "déchets d'emballage",
+  "utilisation du plastique",
+  "vrac",
+  "réutilisable",
+  "contenants réutilisables",
+  "bouteilles plastiques",
+  "réduction des déchets",
+  "matériaux biodégradables",
+  "réemploi"
+)
+
+```
+
+---
+
+# CCC policy cluster keywords
+
+## (2) Production and Work
+```{r production and work}
+# Define or inspect production-and-work terms in the policy-theme dictionary. Review broad terms for context-dependent matches.
+
+production_work <- c(
+  "produits durables",
+  "écoconception",
+  "longévité des produits", 
+  "investissements verts",
+  "clauses environnementales",
+  "droit pollueur-payeur", 
+  "filières émettrices", 
+  "écocide",
+  "produits micropolluants",
+  "énergie verte",
+  "énergies renouvelables",
+  "méthanisation",
+  "autoconsommation",
+  "écolabels",
+  "énergie décarbonée"
+)
+```
+
+---
+
+# CCC policy cluster keywords
+
+## (3) Transport and Mobility
+
+```{r transport and mobility}
+# Define or inspect the transport-and-mobility keyword set used to identify relevant speech texts.
+
+transport_mobility <- c(
+  "mobilité durable",
+  "véhicules faibles émissions",
+  "mobilités douces",
+  "véhicules partagés",
+  "mobilités alternatives",
+  "zones de faible émission",
+  "pistes cyclables",
+  "véhicules électriques",
+  "véhicules hybrides",
+  "émissions du véhicule",
+  "écoconduite",
+  "multimodalité",
+  "moteur éthanol",
+  "moteur électrique",
+  "moteur thermique",
+  "covoiturage",
+  "biocarburants"
+)
+
+```
+
+---
+
+# CCC policy cluster keywords
+
+## (4) Housing
+```{r housing}
+# Define or inspect housing-related keywords and their matching coverage.
+
+housing <- c(
+  "construction bas carbone",
+  "performance énergétique", 
+  "rénovation globale",
+  "chaudières au fioul",
+  "passoires énergétiques",
+  "bâtiments énergivores", 
+  "audit énergétique",
+  "certificats d'économies d'énergie", 
+  "déperditions de chaleur",
+  "climatisation",
+  "chauffage au fioul"
+)
+```
+
+---
+
+# CCC policy cluster keywords
+
+## (5) Food
+
+```{r food}
+# Define or inspect the food-policy cluster terms used in the thematic matching procedure.
+
+food <- c(
+  "alimentaire durable",
+  "EGalim",
+  "repas végétariens",
+  "restauration collective",
+  "faible coût environnemental",
+  "transition vers le bio",
+  "gaspillage alimentaire",
+  "pratiques agroécologiques",
+  "agroécologie",
+  "réduction des pesticides",
+  "agriculture biologique",
+  "plan protéagineux",
+  "prairies permanentes",
+  "reconversion de l'élevage",
+  "développement des légumineuses",
+  "rediversifier les cultures",
+  "engrais chimiques",
+  "couvert végétal",
+  "élevages de ruminants",
+  "ecoscheme",
+  "pêche durable",
+  "surpêche",
+  "propulsion verte",
+  "clauses environnementales",
+  "consommation de viande",
+  "régime moins carné"
+)
+
+```
+
+---
+
+# CCC policy cluster keywords
+
+## (6) Constitution and Governance
+```{r constitution and governance}
+# Define or inspect the constitution-and-governance cluster terms. Interpret its counts in light of the keyword set's narrower coverage.
+
+constitution_gov <- c(
+  "crime d'écocide",
+  "érosion de la biodiversité",
+  "utilisation des sols",
+  "pollution chimique",
+  "dommage écologique",
+  "préjudice écologique"
+)
+
+```
+
+---
+
+# Merging CCC policy-theme keywords  
+```{r ccc policy-theme merged}
+# The keywords by cluster were merged into a single data frame to streamline to streamline the data wrangling process.
+
+ccc_policy <- c(
+ consumption,
+ production_work,
+ transport_mobility,
+ housing,
+ food,
+ constitution_gov
+)
+ccc_policy <- unique(ccc_policy)
+
+```
+
+---
+
+# CCC policy-theme subset building
+```{r CCC policy-theme subset}
+# Identify speeches containing one or more CCC policy-theme terms. Such matches indicate thematic overlap and do not necessarily mention the CCC.
+
+ccc_policy_pattern <- regex(
+ paste0(
+  "\\b(",
+  paste(ccc_policy, collapse = "|"),
+  ")\\b"),
+ignore_case = TRUE)
+
+df_ccc_policy <- df_climate %>%
+ filter(
+  str_detect(
+   speech_text,
+   ccc_policy_pattern
+  )
+ )
+
+  
+dim(df_ccc_policy)
+nrow(df_ccc_policy) / nrow(df_climate)
+table(df_ccc_policy$period)
+```
+
+---
+
+# Salience comparison
+```{r salience comparison}
+# Compare the sizes or proportions of the relevant subsets as specified in the code. Interpret the figures using the denominators actually used here.
+
+df_ccc_policy %>%
+ count(period) %>%
+ left_join(df_climate %>% count(period), by = "period",
+           suffix = c("_ccc_policy", "_climate")) %>%
+ mutate(ratio = round(n_ccc_policy / n_climate, 2),
+        proportion = round(n_ccc_policy / n_climate * 100, 2))
+```
+
+---
+
+# Manual texts inspection
+```{r manual texts inspection}
+# Inspect intermediate results for coverage, plausible matches and potential noise. This is a diagnostic step rather than a separate inferential test.
+
+
+set.seed(5678)
+
+sample_ccc_policy <- df_ccc_policy %>%
+ group_by(period) %>%
+ slice_sample(n = 10) %>%
+ ungroup() %>%
+ arrange(period) %>%
+ mutate(id = row_number())
+
+textfile <- capture.output({
+for(i in seq_len(nrow(sample_ccc_policy))) {
+ cat("\n\n=====================\n")
+ cat("ID:", sample_ccc_policy$id[i],"\n")
+ cat("YEAR:", sample_ccc_policy$year[i],"\n")
+ cat("PERIOD:", sample_ccc_policy$period[i], "\n\n")
+ cat(sample_ccc_policy$speech_text[i])
+ cat("\n")
+ }
+})
+
+writeLines(textfile, "rev2_ccc_policy_manual_inspection.txt")
+
+```
+
+---
+
+# Checking matched phrase
+```{r matched phrase, results='hide'}
+# Inspect intermediate results for coverage, plausible matches and potential noise. This is a diagnostic step rather than a separate inferential test.
+
+sample_text <- sample_ccc_policy %>%
+ filter(id == 10) %>%
+ pull(speech_text)
+
+matches <- sapply(ccc_policy, function(keyword) {
+ str_detect(sample_text, fixed(keyword, ignore_case = TRUE))
+})
+
+matched_phrases <- ccc_policy[matches]
+
+matched_phrases
+
+data.frame(
+ keyword = ccc_policy,
+ matched = matches
+) %>%
+ filter(matched == TRUE)
+
+```
+
+---
+
+# Corpus size
+```{r corpus size}
+# Report corpus and subset sizes used as denominators or contextual information for the salience estimates.
+
+corpus_size_yearly <- df_ccc_policy %>%
+ mutate(
+  n_words = str_count(speech_text, "\\S+")
+ ) %>%
+ group_by(year) %>%
+ summarise(
+  speeches = n(),
+  total_words = sum(n_words),
+  .groups = "drop"
+ )
+
+corpus_size_yearly
+
+```
+---
+
+# Salience analysis
+Calculate salience as the proportion of climate-policy speeches containing CCC-related references. Salience is examined by period and year.
+```{r salience analysis}
+# Calculate the overall and time-specific salience indicators for explicit CCC references and CCC-related policy themes.
+
+
+# Overall salience increase
+
+## Explicit CCC references
+ccc_explicit_salience <- df_ccc_explicit %>%
+ mutate(
+  period = factor(
+   period,
+   levels = c("pre", "transition", "post"))
+ ) %>%
+ count(period) %>%
+ left_join(df_climate %>% count(period), by = "period",
+           suffix = c("_ccc_explicit", "_climate")) %>%
+ mutate(ratio = n_ccc_explicit / n_climate,
+        proportion = round(ratio * 100, 2))
+
+ccc_explicit_salience
+
+write.xlsx(ccc_explicit_salience, "ccc_explicit_salience.xlsx")
+
+
+## CCC policy-theme references
+ccc_policy_salience <- df_ccc_policy %>%
+ mutate(
+  period = factor(
+   period,
+   levels = c("pre", "transition", "post"))
+ ) %>%
+ count(period) %>%
+ left_join(df_climate %>% count(period), by = "period",
+           suffix = c("_ccc_policy", "_climate")) %>%
+ mutate(ratio = n_ccc_policy / n_climate,
+        proportion = round(ratio * 100, 2))
+
+ccc_policy_salience
+
+write.xlsx(ccc_policy_salience, "ccc_policy_salience.xlsx")
+
+# Across-time development
+
+## explicit CCC
+ccc_explicit_yearly <- df_climate %>%
+ count(year, name = "n_climate") %>%
+ complete(year = 2017:2022, fill = list(n_climate = 0)) %>%
+ left_join(df_ccc_explicit %>% count(year, name = "n_ccc_explicit"), 
+           by = "year"
+           ) %>%
+ mutate(
+  n_ccc_explicit = replace_na(n_ccc_explicit, 0),
+  ratio = n_ccc_explicit / n_climate,
+        proportion = round(ratio * 100, 2))
+
+ccc_explicit_yearly
+
+write.xlsx(ccc_explicit_yearly, "ccc_explicit_yearly.xlsx")
+
+## CCC policy-theme
+ccc_policy_yearly <- df_climate %>%
+ count(year, name = "n_climate") %>%
+ complete(year = 2017:2022, fill = list(n_climate = 0)) %>%
+ left_join(
+  df_ccc_policy %>%
+   count(year, name = "n_ccc_policy"),
+  by = "year"
+ ) %>%
+ mutate(
+  n_ccc_policy = replace_na(n_ccc_policy, 0),
+  ratio = n_ccc_policy / n_climate,
+        proportion = round(ratio * 100, 2))
+
+ccc_policy_yearly
+
+write.xlsx(ccc_policy_yearly, "ccc_policy_yearly.xlsx")
+
+# visualisation
+
+## explicit ccc (periodisation)
+ccc_explicit_salience_period <- ccc_explicit_salience %>%
+ mutate(
+  period = factor(period,
+                  levels = c("pre", "transition", "post"))
+ ) %>%
+  ggplot(aes(x = period, y = proportion)) +
+  geom_col(width = 0.6) +
+  labs(
+    title = "Salience of CCC-explicit references by period",
+    subtitle = "Share of climate-policy speeches containing excplicit CCC references",
+    x     = NULL,
+    y     = "Share of climate-policy speeches (%)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+   plot.title = element_text(face = "bold"),
+   plot.subtitle = element_text(size = 10))
+
+ccc_explicit_salience_period
+
+ggsave("ccc_explicit_salience_period.png", ccc_explicit_salience_period, width = 10, height = 6, dpi = 300)
+
+## explicit CCC (yearly)
+ccc_explicit_yearly_salience <- ccc_explicit_yearly %>%
+  ggplot(aes(x = year, y = proportion)) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 2) +
+  geom_vline(xintercept = 2020, linetype = "dashed", colour = "grey50") +
+  annotate("text", x = 2020.1, y = Inf, label = "CCC publication",
+           hjust = 0, vjust = 1.5, size = 3.5, colour = "grey50") +
+  scale_x_continuous(breaks = 2017:2022) +
+  labs(
+    title = "Yearly salience of explicit CCC references",
+    subtitle = "Share of climate-policy speeches containing excplicit CCC references",
+    x     = NULL,
+    y     = "Share of climate-policy speeches (%)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none",
+        plot.title = element_text(face = "bold"),
+        plot.subtitle = element_text(size = 10))
+
+ccc_explicit_yearly_salience
+
+ggsave("ccc_explicit_yearly_salience.png", ccc_explicit_yearly_salience, width = 10, height = 6, dpi = 300)
+
+## CCC policy-theme (periodisation)
+ccc_policy_salience_period <- ccc_policy_salience %>%
+ mutate(
+  period = factor(period,
+                  levels = c("pre", "transition", "post"))
+ ) %>%
+  ggplot(aes(x = period, y = proportion)) +
+  geom_col(width = 0.6) +
+  labs(
+    title = "Salience of CCC policy-theme references by period",
+    subtitle = "Share of climate-policy speeches containing CCC policy-theme references",
+    x     = NULL,
+    y     = "Share of climate-policy speeches (%)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+   plot.title = element_text(face = "bold"),
+   plot.subtitle = element_text(size = 10))
+
+ccc_policy_salience_period
+
+ggsave("ccc_policy_salience_period.png", ccc_policy_salience_period, width = 10, height = 6, dpi = 300)
+
+
+## CCC policy-theme (yearly)
+ccc_policy_yearly_salience <- ccc_policy_yearly %>%
+  ggplot(aes(x = year, y = proportion)) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 2) +
+  geom_vline(xintercept = 2020, linetype = "dashed", colour = "grey50") +
+  annotate("text", x = 2020.1, y = Inf, label = "CCC publication",
+           hjust = 0, vjust = 1.5, size = 3.5, colour = "grey50") +
+  scale_x_continuous(breaks = 2017:2022) +
+  labs(
+    title = "Yearly salience of CCC policy-theme references",
+    subtitle = "Share of climate-policy speeches containing CCC policy-theme references",
+    x     = NULL,
+    y     = "Share of climate-policy speeches (%)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none",
+        plot.title = element_text(face = "bold"),
+        plot.subtitle = element_text(size = 10))
+
+ccc_policy_yearly_salience
+
+ggsave("ccc_policy_yearly_salience.png", ccc_policy_yearly_salience, width = 10, height = 6, dpi = 300)
+
+
+```
+
+

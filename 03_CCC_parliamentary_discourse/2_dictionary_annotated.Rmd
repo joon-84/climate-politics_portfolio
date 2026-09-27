@@ -1,0 +1,603 @@
+---
+title: "Dictionary development"
+author: "Junhui Park"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## Purpose
+This file develops the dictionaries used to identify explicit references to the Citizens' Convention for Climate (CCC) and references to CCC policy themes.
+
+## Dictionary types
+1. Explicit CCC dictionary
+2. CCC policy-theme dictionary
+
+## Dictionary development strategy
+The dictionaries were developed through an iterative process combining concept-driven and data-driven approaches.
+
+## Important decisions
+- Word-boundary matching is used throughout the project.
+- 'tirage au sort' was removed from the explicit CCC dictionary after validation.
+- A stricter dictionary version was developed separately for robustness checks.
+
+
+## Workflow note
+
+This document develops and inspects the dictionaries used to identify explicit references to the Citizens' Convention for Climate (CCC) and references to its policy themes. It reconstructs the climate-policy corpus, defines six policy-theme clusters, applies the dictionaries to speech texts, and inspects selected matches. The policy-theme dictionary identifies thematic overlap; a match alone does not establish that a speaker was referring to the CCC. The code below is unchanged; the notes document the analytical workflow.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE)
+
+# Load the packages and establish the options used by subsequent chunks. Reproducibility depends on the stated package versions, local input files and working environment.
+
+# libraries
+library(xml2)
+library(dplyr)
+library(tidyverse)
+library(stringr)
+library(purrr)
+library(tibble)
+
+# global options
+options(stringsAsFactors = FALSE)
+
+# reproductibility
+set.seed(123)
+
+# knitr options
+knitr::opts_chunk$set(
+ echo = TRUE,
+ warning = FALSE,
+ message = FALSE)
+```
+
+## Data loading
+```{r data loading, results='hide'}
+# Included for independent execution of this script.
+# The primary corpus construction workflow is documented in 1_full_corpus_annotated.Rmd.
+
+all_files <- list.files("xml_folder_path",
+                    pattern = "\\.xml$",
+                    full.names = TRUE)
+
+length(all_files)
+head(all_files, 5)
+
+test_file <- all_files[1]
+test_file
+
+```
+
+## parsing
+```{r parsing}
+# Extract speech text and relevant metadata from the XML structure, applying the cleaning operations specified in the code. Subsequent counts depend on the unit of text produced here.
+
+parse_one_xml <- function(file_path) {
+ doc <- read_xml(file_path)
+ xml_ns_strip(doc)
+ 
+ if (length(xml_find_all(doc, ".//paragraphe")) > 0) {
+  nodes <- xml_find_all(doc, ".//paragraphe")
+  tag_used <- "paragraphe"
+ } else if (length(xml_find_all(doc, ".//para")) > 0) {
+  nodes <- xml_find_all(doc, ".//para")
+  tag_used <- "para"
+ } else if (length(xml_find_all(doc, ".//texte")) > 0) {
+  nodes <- xml_find_all(doc, ".//texte")
+  tag_used <- "texte"
+ } else {
+  return(tibble(
+         file = basename(file_path),
+         tag_used = NA_character_,
+         speech_text = NA_character_
+         ))
+ }
+ 
+tibble(
+ file = basename(file_path),
+ tag_used = tag_used,
+ speech_text = xml_text(nodes)
+) %>%
+ mutate(
+  speech_text = str_remove_all(speech_text, "\\d+"),
+  speech_text = str_remove_all(speech_text, "\\([^\\)]+\\)"),
+  speech_text = str_remove_all(speech_text, "La parole est à.*?(\\.|$)"),
+  speech_text = str_remove_all(speech_text, "La séance est.*?(\\.|$)"),
+  speech_text = str_squish(speech_text)
+ ) %>%
+ filter(!is.na(speech_text), speech_text != "")
+}
+
+```
+
+
+## full corpus building
+```{r full corpus building, results='hide'}
+# Assemble the extracted speeches into the working corpus. Check the object structure and row counts before interpreting later subsets.
+
+df_full <- map_dfr(all_files, parse_one_xml)
+
+dim(df_full)
+head(df_full, 10)
+table(df_full$tag_used, useNA = "ifany")
+
+df_full <- df_full %>%
+ filter(!is.na(speech_text), speech_text != "")
+```
+
+
+## Creating year and period variables
+```{r year and period}
+# Re-create year and period variables
+# Included for independent execution of this script.
+# Main corpus construction is documented in 1_full_ corpus_annotated.rmd.
+
+df_full <- df_full %>%
+ mutate(
+  year = stringr::str_extract(file, "20\\d{2}") %>%
+   as.numeric(),
+  period = case_when(
+   year %in% 2017:2019 ~ "pre",
+   year == 2020 ~ "transition",
+   year %in% 2021:2022 ~ "post",
+   TRUE ~ NA_character_
+ )
+) %>%
+ filter(year %in% 2017:2022)
+
+```
+
+
+## climate keywords
+```{r climate-policy keywords}
+# Specify the general climate-policy search terms. These terms delimit the broader debate corpus for the later CCC-related analyses.
+
+climate_keywords <- c(
+ "climat", "climatique",
+ "environnement", "écologie",
+ "transition écologique",
+ "transition énergétique",
+ "émissions",
+ "carbone",
+ "pollution",
+ "fiscalité carbone",
+ "pesticides",
+ "déchets",
+ "recyclage",
+ "passoires énergétiques",
+ "neutralité carbone",
+ "empreinte carbone",
+ "énergies renouvelables",
+ "sobriété énergétique",
+ "rénovation énergétique",
+ "efficacité énergétique",
+ "économie circulaire",
+ "zéro artificialisation nette",
+ "transition juste",
+ "report modal",
+ "covoiturage",
+ "alimentation durable",
+ "engrais minéraux azotés",
+ "sortie du pétrole"
+ )
+
+```
+
+
+## climate subset building
+```{r climate subset}
+# Filter the corpus to speeches matched by the climate-policy dictionary; inspect the resulting size before applying the CCC dictionaries.
+
+
+climate_pattern <- regex(
+ paste0("\\b(", paste(climate_keywords, collapse = "|"), ")\\b"), ignore_case = TRUE
+)
+
+df_climate <- df_full %>%
+ filter(str_detect(speech_text, climate_pattern))
+
+dim(df_climate)
+nrow(df_climate) / nrow(df_full)
+
+df_climate %>%
+ count(period) %>%
+ mutate(ratio = n / sum(n))
+
+```
+
+
+## Sample texts inspection
+## Validation
+Dictionary validity was assessed through repeated manual inspection of matched speeches.
+```{r sample texts inspection}
+# Inspect selected matched speeches to assess whether the dictionary captures substantively relevant uses and to identify potential false positives.
+
+set.seed(123)
+
+sample_climate_policy <- df_climate %>%
+ slice_sample(n = min(5, nrow(df_climate))) %>%
+ mutate(id = row_number())
+
+textfile <- capture.output({
+for(i in seq_len(nrow(sample_climate_policy))) {
+ cat("\n\n=====================\n")
+ cat("ID:", sample_climate_policy$id[i],"\n")
+ cat("YEAR:", sample_climate_policy$year[i],"\n")
+ cat("PERIOD:", sample_climate_policy$period[i], "\n\n")
+ cat(sample_climate_policy$speech_text[i])
+ cat("\n")
+ }
+})
+
+writeLines(textfile, "rev_climate_policy_manual_inspection.txt")
+```
+
+
+## Checking matched keywords
+```{r checking matched keywords, results='hide'}
+# Display which keywords generated matches in the selected texts. This diagnostic helps distinguish relevant hits from overly broad terms.
+
+sample_text <- sample_climate_policy %>%
+ filter(id == 5) %>%
+ pull(speech_text)
+
+matches <- sapply(climate_keywords, function(keyword) {
+ str_detect(sample_text, fixed(keyword, ignore_case = TRUE))
+})
+
+matched_phrases <- climate_keywords[matches]
+
+matched_phrases
+
+data.frame(
+ keyword = climate_keywords,
+ matched = matches
+) %>%
+ filter(matched == TRUE)
+
+```
+
+## CCC explicit dictionary
+The CCC explicit keywords were constructed from offical documents and political statements directly related to the Convention, including the CCC final report, governmental press releases issued following the Grand Débat National and the publication of CCC recommendations, and the mission letter addressed by then-Prime Minister.The purpose of this dictionary was to capture direct instituional references to the CCC and its recommendations.
+```{r Explicit CCC dictionary}
+# Define terms intended to capture explicit references to the CCC as an institution, rather than thematic overlap alone.
+
+ccc_explicit <- c(
+ "convention citoyenne",
+ "convention citoyenne pour le climat",
+ "convention citoyenne sur le climat",
+ "conventions citoyennes",
+ "citoyens de la convention",
+ "citoyens tirés au sort",
+ "150 citoyens"
+ )
+
+```
+
+
+## Explicit CCC subset 
+```{r Explicit CCC subset}
+# Identify speeches containing explicit CCC reference terms and retain the relevant matching information for later checks or comparisons.
+
+explicit_ccc_pattern <- regex(
+ paste0(
+  "\\b(",
+  paste(ccc_explicit, collapse = "|"),
+  ")\\b"
+ ),
+ ignore_case = TRUE
+)
+
+df_ccc_explicit <- df_climate %>%
+ filter(
+  str_detect(
+   speech_text,
+   explicit_ccc_pattern
+  )
+ )
+
+dim(df_ccc_explicit)
+nrow(df_ccc_explicit) / nrow(df_climate)
+table(df_ccc_explicit$period, useNA = "ifany")
+
+df_ccc_explicit %>%
+ count(period) %>%
+ mutate(ratio = n / sum(n))
+```
+
+
+## Results check for CCC explicit
+```{r results check for CCC explicit}
+# Inspect intermediate results for coverage, plausible matches and potential noise. This is a diagnostic step rather than a separate inferential test.
+
+set.seed(123)
+
+sample_ccc_explicit <- df_ccc_explicit %>%
+ slice_sample(n = min(10, nrow(df_ccc_explicit))) %>%
+ mutate(id = row_number())
+
+textfile <- capture.output({
+for(i in seq_len(nrow(sample_ccc_explicit))) {
+ cat("\n\n=====================\n")
+ cat("ID:", sample_ccc_explicit$id[i],"\n")
+ cat("YEAR:", sample_ccc_explicit$year[i],"\n")
+ cat("PERIOD:", sample_ccc_explicit$period[i], "\n\n")
+ cat(sample_ccc_explicit$speech_text[i])
+ cat("\n")
+ }
+})
+
+writeLines(textfile, "rev_ccc_explicit_manual_inspection.txt")
+```
+
+
+## Building CCC policy-them cluster keywords
+The CCC policy keywords are grouped into six clusters: 1) consumption, 2) production and work, 3) transport and mobility, 4) housing, 5) food, and 6) constitution and governance. These clusters were derived from the thematic structure of the CCC final report rather than being defined inductively by the researcher.
+## 1. consumption
+```{r consumption}
+# Define or inspect the consumption-cluster keyword set. The subsequent matching step treats these terms as indicators of thematic overlap, not proof of an explicit CCC reference.
+
+consumption <- c(
+  "surconsommation",
+  "emballage",
+  "plastique à usage unique", 
+  "publicité", 
+  "suremballage", 
+  "consommation responsable", 
+  "affichage environnemental",
+  "affichage carbone",
+  "écoresponsables",
+  "écoresponsabilité",
+  "produits polluants",
+  "produits vertueux", 
+  "recyclage",
+  "économie circulaire",
+  "déchets d'emballage",
+  "utilisation du plastique",
+  "vrac",
+  "réutilisable",
+  "contenants réutilisables",
+  "bouteilles plastiques",
+  "réduction des déchets",
+  "matériaux biodégradables",
+  "réemploi"
+)
+
+```
+
+
+## 2. Production and Work
+```{r production and work}
+# Define or inspect production-and-work terms in the policy-theme dictionary. Review broad terms for context-dependent matches.
+
+production_work <- c(
+  "produits durables",
+  "écoconception",
+  "longévité des produits", 
+  "investissements verts",
+  "clauses environnementales",
+  "droit pollueur-payeur", 
+  "filières émettrices", 
+  "écocide",
+  "produits micropolluants",
+  "énergie verte",
+  "énergies renouvelables",
+  "méthanisation",
+  "autoconsommation",
+  "écolabels",
+  "énergie décarbonée"
+)
+```
+
+
+## 3. Transport and Mobility
+```{r transport and mobility}
+# Define or inspect the transport-and-mobility keyword set used to identify relevant speech texts.
+
+transport_mobility <- c(
+  "mobilité durable",
+  "véhicules faibles émissions",
+  "mobilités douces",
+  "véhicules partagés",
+  "mobilités alternatives",
+  "zones de faible émission",
+  "pistes cyclables",
+  "véhicules électriques",
+  "véhicules hybrides",
+  "émissions du véhicule",
+  "écoconduite",
+  "multimodalité",
+  "moteur éthanol",
+  "moteur électrique",
+  "moteur thermique",
+  "covoiturage",
+  "biocarburants"
+)
+
+```
+
+
+## 4. Housing
+```{r housing}
+# Define or inspect housing-related keywords and their matching coverage.
+
+housing <- c(
+  "construction bas carbone",
+  "performance énergétique", 
+  "rénovation globale",
+  "chaudières au fioul",
+  "passoires énergétiques",
+  "bâtiments énergivores", 
+  "audit énergétique",
+  "certificats d'économies d'énergie", 
+  "déperditions de chaleur",
+  "climatisation",
+  "chauffage au fioul"
+)
+```
+
+
+## 5. Food
+```{r food}
+# Define or inspect the food-policy cluster terms used in the thematic matching procedure.
+
+food <- c(
+  "alimentaire durable",
+  "EGalim",
+  "repas végétariens",
+  "restauration collective",
+  "faible coût environnemental",
+  "transition vers le bio",
+  "gaspillage alimentaire",
+  "pratiques agroécologiques",
+  "agroécologie",
+  "réduction des pesticides",
+  "agriculture biologique",
+  "plan protéagineux",
+  "prairies permanentes",
+  "reconversion de l'élevage",
+  "développement des légumineuses",
+  "rediversifier les cultures",
+  "engrais chimiques",
+  "couvert végétal",
+  "élevages de ruminants",
+  "ecoscheme",
+  "pêche durable",
+  "surpêche",
+  "propulsion verte",
+  "clauses environnementales",
+  "consommation de viande",
+  "régime moins carné"
+)
+
+```
+
+## 6. Constitution & Governance
+```{r constitution and governance}
+# Define or inspect the constitution-and-governance cluster terms. Interpret its counts in light of the keyword set's narrower coverage.
+
+constitution_gov <- c(
+  "crime d'écocide",
+  "érosion de la biodiversité",
+  "utilisation des sols",
+  "pollution chimique",
+  "dommage écologique",
+  "préjudice écologique"
+)
+
+```
+
+## Merging CCC policy-theme keywords  
+```{r ccc policy-theme merged}
+# The keywords by cluster were merged into a single data frame to streamline to streamline the data wrangling process.
+
+ccc_policy <- c(
+ consumption,
+ production_work,
+ transport_mobility,
+ housing,
+ food,
+ constitution_gov
+)
+ccc_policy <- unique(ccc_policy)
+
+```
+
+## CCC policy-theme subset building
+```{r CCC policy-theme subset}
+# Identify speeches containing one or more CCC policy-theme terms. Such matches indicate thematic overlap and do not necessarily mention the CCC.
+
+
+ccc_policy_pattern <- regex(
+ paste0(
+  "\\b(",
+  paste(ccc_policy, collapse = "|"),
+  ")\\b"),
+ignore_case = TRUE)
+
+df_ccc_policy <- df_climate %>%
+ filter(
+  str_detect(
+   speech_text,
+   ccc_policy_pattern
+  )
+ )
+
+  
+dim(df_ccc_policy)
+nrow(df_ccc_policy) / nrow(df_climate)
+table(df_ccc_policy$period)
+
+df_ccc_policy %>%
+ count(period) %>%
+ mutate(ratio = n / sum(n))
+```
+
+
+## Salience comparison
+```{r salience comparison}
+# Compare the sizes or proportions of the relevant subsets as specified in the code. Interpret the figures using the denominators actually used here.
+
+df_ccc_policy %>%
+ count(period, name = "n_ccc_policy") %>%
+ left_join(df_climate %>% count(period, name = "n_climate"), by = "period",
+           suffix = c("_ccc_policy", "_climate")) %>%
+ mutate(ratio = n_ccc_policy / n_climate)
+```
+
+
+## Sample texts manual inspection
+```{r sample texts manual inspection}
+# Inspect intermediate results for coverage, plausible matches and potential noise. This is a diagnostic step rather than a separate inferential test.
+
+set.seed(5678)
+
+sample_ccc_policy <- df_ccc_policy %>%
+ group_by(period) %>%
+ slice_sample(n = 10) %>%
+ ungroup() %>%
+ arrange(period) %>%
+ mutate(id = row_number())
+
+textfile <- capture.output({
+for(i in seq_len(nrow(sample_ccc_policy))) {
+ cat("\n\n=====================\n")
+ cat("ID:", sample_ccc_policy$id[i],"\n")
+ cat("YEAR:", sample_ccc_policy$year[i],"\n")
+ cat("PERIOD:", sample_ccc_policy$period[i], "\n\n")
+ cat(sample_ccc_policy$speech_text[i])
+ cat("\n")
+ }
+})
+
+writeLines(textfile, "rev2_ccc_policy_manual_inspection.txt")
+
+```
+
+## Checking matched phrase
+```{r matched phrase check, results='hide'}
+# Inspect intermediate results for coverage, plausible matches and potential noise. This is a diagnostic step rather than a separate inferential test.
+
+
+sample_text <- sample_ccc_policy %>%
+ filter(id == 10) %>%
+ pull(speech_text)
+
+matches <- sapply(ccc_policy, function(keyword) {
+ str_detect(sample_text, fixed(keyword, ignore_case = TRUE))
+})
+
+matched_phrases <- ccc_policy[matches]
+
+matched_phrases
+
+data.frame(
+ keyword = ccc_policy,
+ matched = matches
+) %>%
+ filter(matched == TRUE)
+
+```
+
+
+

@@ -1,0 +1,44 @@
+---
+title: "README"
+author: "Junhui Park"
+date: "`r Sys.Date()`"
+output: github_document
+---
+
+# The French Citizens’ Convention on Climate in Parliamentary Discourse
+
+## About this repository
+
+This repository contains the R Markdown files used for the quantitative text analysis in my master's thesis on the French Citizens' Convention on Climate (CCC) in parliamentary discourse.
+
+The files document the main steps of the analysis, from building the parliamentary debate corpus to analysing the salience of CCC-related policy themes and conducting robustness checks. The dictionaries used in the analysis are included in the R Markdown files.
+
+## R Markdown files
+
+The files are numbered to reflect the order of the analytical steps. However, each R Markdown file is self-contained and can be run indepedently, provided that the required XML source files are available and the file paths are adjusted accordingly.
+
+| File | Main purpose |
+| --- | --- |
+| `1_full_corpus_annotated.Rmd` | Parse the source XML files, construct the speech corpus, assign temporal variables, and identify climate-policy-related speeches. |
+| `2_dictionary_annotated.Rmd` | Develop and inspect the climate-policy, explicit CCC-reference, and CCC policy-theme dictionaries; examine matched texts. |
+| `3_salience_annotated.Rmd` | Calculate and visualise the prevalence of explicit CCC references and references to associated policy themes across periods and years. |
+| `4_keyness_annotated.Rmd` | Compare vocabulary across the pre- and post-CCC periods using corpus-based keyness analysis; inspect selected keywords in context. |
+| `5_robustness check_annotated.Rmd` | Compare results obtained using the original and stricter policy-theme dictionaries at period and year levels. |
+| `6_cluster_robustness_annotated.Rmd` | Examine policy-theme references and robustness across six thematic clusters. |
+
+## Data source
+
+The analysis uses French National Assembly parliamentary debate transcripts from the 15th and 16th legislatures. The original XML files are availabe from the following official websites:
+
+- 15th legislature: https://data.assemblee-nationale.fr/archives-anterieures/archives-15e/debats-en-seance-publique
+- 16th legislature:
+https://data.assemblee-nationale.fr/archives-16e/debats
+
+Both websites were accessed on 25 September 2026. The data are made available under the Licence Ouverte / Open Licence.
+
+The original XML files are not included in this repository. They need to be obtained from the websites above. The file paths in the R Markdown fiels may need to be adjusted before running the code.
+
+## Scope
+
+This repository contains the code for the quantitative analysis only. The qualitative framing analysis is documented in the thesis appendix.
+

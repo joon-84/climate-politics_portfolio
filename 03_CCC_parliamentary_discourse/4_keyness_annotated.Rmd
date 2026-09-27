@@ -1,0 +1,1095 @@
+---
+title: "Keyness Analysis"
+author: "Junhui Park"
+date: "`r Sys.Date()`"
+output: html_document
+
+---
+
+## Purpose
+This file is to conduct a keyness analysis comparing a frequency between target corpus (post-period) and reference corpus (pre-period). Primarily, this is to identify terms that became relatively more prominent after the publication of the CCC policy recommendations.
+
+
+## Workflow note
+This document compares vocabulary in the pre- and post-CCC parliamentary climate-policy corpora using keyness statistics and complementary effect-size measures. It prepares the text, constructs document-feature matrices, filters and ranks candidate keywords, inspects contextual uses, and exports tables and figures. The transition year is excluded from the main pre/post comparison. Keyness describes differences in relative word use, not the causal effect of the CCC. Existing methodological notes and all code are preserved.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE)
+# Load the packages and establish the options used by subsequent chunks. Reproducibility depends on the stated package versions, local input files and working environment.
+
+library(xml2)
+library(dplyr)
+library(tidyverse)
+library(stringr)
+library(purrr)
+library(tibble)
+library(quanteda)
+library(quanteda.textstats)
+library(quanteda.textplots)
+library(stopwords)
+library(openxlsx)
+library(ggrepel)
+
+options(stringsAsFactors = FALSE)
+set.seed(123)
+
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+---
+
+# Data loading
+```{r data loading, results='hide'}
+# Read the parliamentary source files into R. The resulting objects provide the input for the extraction and filtering steps below.
+
+all_files <- list.files(
+  "xml_folder_path",
+  pattern    = "\\.xml$",
+  full.names = TRUE
+)
+
+length(all_files)
+head(all_files, 5)
+```
+
+---
+
+# XML parsing
+```{r parsing}
+# Extract speech text and relevant metadata from the XML structure, applying the cleaning operations specified in the code. Subsequent counts depend on the unit of text produced here.
+
+
+parse_one_xml <- function(file_path) {
+  doc <- read_xml(file_path)
+  xml_ns_strip(doc)
+
+  if (length(xml_find_all(doc, ".//paragraphe")) > 0) {
+    nodes    <- xml_find_all(doc, ".//paragraphe")
+    tag_used <- "paragraphe"
+  } else if (length(xml_find_all(doc, ".//para")) > 0) {
+    nodes    <- xml_find_all(doc, ".//para")
+    tag_used <- "para"
+  } else if (length(xml_find_all(doc, ".//texte")) > 0) {
+    nodes    <- xml_find_all(doc, ".//texte")
+    tag_used <- "texte"
+  } else {
+    return(tibble(
+      file        = basename(file_path),
+      tag_used    = NA_character_,
+      speech_text = NA_character_
+    ))
+  }
+
+  tibble(
+    file        = basename(file_path),
+    tag_used    = tag_used,
+    speech_text = xml_text(nodes)
+  ) %>%
+    mutate(
+      speech_text = str_remove_all(speech_text, "\\d+"),
+      speech_text = str_remove_all(speech_text, "\\([^\\)]+\\)"),
+      speech_text = str_remove_all(speech_text, "La parole est à.*?(\\.|$)"),
+      speech_text = str_remove_all(speech_text, "La séance est.*?(\\.|$)"),
+      speech_text = str_squish(speech_text)
+    ) %>%
+    filter(!is.na(speech_text), speech_text != "")
+}
+```
+
+---
+
+# Full corpus building
+```{r full corpus building}
+# Assemble the extracted speeches into the working corpus. Check the object structure and row counts before interpreting later subsets.
+
+
+df_full <- map_dfr(all_files, parse_one_xml) %>%
+  filter(!is.na(speech_text), speech_text != "")
+
+dim(df_full)
+table(df_full$tag_used, useNA = "ifany")
+```
+
+---
+
+# Temporal variables
+```{r year and period}
+# Assign speeches to years and analytical periods. These labels define the denominators and comparison groups used later.
+
+# NOTE: Pre period = 3 years (2017-2019); Post period = 2 years (2021-2022).
+# This corpus-size imbalance is handled by G² (relative frequency based), but should be noted explicitly in the methods section.
+
+df_full <- df_full %>%
+ mutate(
+  year = stringr::str_extract(file, "20\\d{2}") %>%
+   as.numeric(),
+  period = case_when(
+   year %in% 2017:2019 ~ "pre",
+   year == 2020 ~ "transition",
+   year %in% 2021:2022 ~ "post",
+   TRUE ~ NA_character_
+ )
+) %>%
+ filter(year %in% 2017:2022)
+```
+
+---
+
+# Dictionaries
+
+## Climate-policy dictionary
+```{r climate-policy dictionary}
+# Define the general climate-policy terms used to identify the relevant parliamentary speech subset. This dictionary defines the analytical corpus, not explicit CCC references.
+
+climate_keywords <- c(
+  "climat", "climatique",
+  "environnement", "écologie",
+  "transition écologique",
+  "transition énergétique",
+  "émissions",
+  "carbone",
+  "pollution",
+  "fiscalité carbone",
+  "pesticides",
+  "déchets",
+  "recyclage",
+  "passoires énergétiques",
+  "neutralité carbone",
+  "empreinte carbone",
+  "énergies renouvelables",
+  "sobriété énergétique",
+  "rénovation énergétique",
+  "efficacité énergétique",
+  "économie circulaire",
+  "zéro artificialisation nette",
+  "transition juste",
+  "report modal",
+  "covoiturage",
+  "alimentation durable",
+  "engrais minéraux azotés",
+  "sortie du pétrole"
+)
+```
+
+## CCC explicit dictionary
+```{r CCC explicit dictionary}
+# Define, combine or inspect the keyword set used in the subsequent matching step. Keyword selection determines the breadth of the resulting indicator.
+
+ccc_explicit <- c(
+  "convention citoyenne",
+  "convention citoyenne pour le climat",
+  "convention citoyenne sur le climat",
+  "conventions citoyennes",
+  "citoyens de la convention",
+  "citoyens tirés au sort",
+  "150 citoyens"
+)
+```
+
+## CCC policy-theme dictionary
+```{r CCC policy-theme dictionary}
+# Define, combine or inspect the keyword set used in the subsequent matching step. Keyword selection determines the breadth of the resulting indicator.
+
+consumption <- c(
+  "surconsommation", "emballage", "plastique à usage unique",
+  "publicité", "suremballage", "consommation responsable",
+  "affichage environnemental", "affichage carbone",
+  "écoresponsables", "écoresponsabilité", "produits polluants",
+  "produits vertueux", "recyclage", "économie circulaire",
+  "déchets d'emballage", "utilisation du plastique", "vrac",
+  "réutilisable", "contenants réutilisables", "bouteilles plastiques",
+  "réduction des déchets", "matériaux biodégradables", "réemploi"
+)
+
+production_work <- c(
+  "produits durables", "écoconception", "longévité des produits",
+  "investissements verts", "clauses environnementales",
+  "droit pollueur-payeur", "filières émettrices", "écocide",
+  "produits micropolluants", "énergie verte", "énergies renouvelables",
+  "méthanisation", "autoconsommation", "écolabels", "énergie décarbonée"
+)
+
+transport_mobility <- c(
+  "mobilité durable", "véhicules faibles émissions",
+  "mobilités douces", "véhicules partagés", "mobilités alternatives",
+  "zones de faible émission", "pistes cyclables",
+  "véhicules électriques", "véhicules hybrides",
+  "émissions du véhicule", "écoconduite", "multimodalité",
+  "moteur éthanol", "moteur électrique", "moteur thermique",
+  "covoiturage", "biocarburants"
+)
+
+housing <- c(
+  "construction bas carbone", "performance énergétique",
+  "rénovation globale", "chaudières au fioul",
+  "passoires énergétiques", "bâtiments énergivores",
+  "audit énergétique", "certificats d'économies d'énergie",
+  "déperditions de chaleur", "climatisation", "chauffage au fioul"
+)
+
+food <- c(
+  "alimentaire durable", "EGalim", "repas végétariens",
+  "restauration collective", "faible coût environnemental",
+  "transition vers le bio", "gaspillage alimentaire",
+  "pratiques agroécologiques", "agroécologie",
+  "réduction des pesticides", "agriculture biologique",
+  "plan protéagineux", "prairies permanentes",
+  "reconversion de l'élevage", "développement des légumineuses",
+  "rediversifier les cultures", "engrais chimiques", "couvert végétal",
+  "élevages de ruminants", "ecoscheme", "pêche durable", "surpêche",
+  "propulsion verte", "clauses environnementales",
+  "consommation de viande", "régime moins carné"
+)
+
+constitution_gov <- c(
+  "crime d'écocide", "érosion de la biodiversité",
+  "utilisation des sols", "pollution chimique",
+  "dommage écologique", "préjudice écologique"
+)
+
+ccc_policy <- unique(c(
+  consumption, production_work, transport_mobility,
+  housing, food, constitution_gov
+))
+```
+
+---
+
+# Corpus filtering
+
+## Climate-policy corpus
+```{r climate-corpus}
+# Construct or inspect the working speech corpus and its analytical subsets.
+
+
+climate_pattern <- regex(
+ paste0("\\b(", paste(climate_keywords, collapse = "|"), ")\\b"), ignore_case = TRUE
+)
+
+df_climate <- df_full %>%
+ filter(str_detect(speech_text, climate_pattern))
+
+dim(df_climate)
+nrow(df_climate) / nrow(df_full)
+
+df_climate %>%
+ count(period) %>%
+ mutate(ratio = n / sum(n))
+```
+
+
+```{r climate-sample, results='hide'}
+# Construct or inspect the working speech corpus and its analytical subsets.
+
+set.seed(123)
+df_climate %>%
+  slice_sample(n = 10) %>%
+  select(year, period, speech_text)
+```
+
+## CCC explicit corpus
+```{r ccc-explicit-corpus}
+# Construct or inspect the working speech corpus and its analytical subsets.
+
+
+explicit_ccc_pattern <- regex(
+ paste0(
+  "\\b(",
+  paste(ccc_explicit, collapse = "|"),
+  ")\\b"
+ ),
+ ignore_case = TRUE
+)
+
+df_ccc_explicit <- df_climate %>%
+ filter(
+  str_detect(
+   speech_text,
+   explicit_ccc_pattern
+  )
+ )
+
+dim(df_ccc_explicit)
+nrow(df_ccc_explicit) / nrow(df_climate)
+table(df_ccc_explicit$period, useNA = "ifany")
+
+df_ccc_explicit %>%
+ count(period) %>%
+ mutate(ratio = n / sum(n))
+```
+
+## CCC policy-theme corpus
+```{r ccc-policy-corpus}
+# Construct or inspect the working speech corpus and its analytical subsets.
+
+
+ccc_policy_pattern <- regex(
+ paste0(
+  "\\b(",
+  paste(ccc_policy, collapse = "|"),
+  ")\\b"),
+ignore_case = TRUE)
+
+df_ccc_policy <- df_climate %>%
+ filter(
+  str_detect(
+   speech_text,
+   ccc_policy_pattern
+  )
+ )
+
+ccc_policy_period_ratio <- df_ccc_policy %>%
+  count(period, name = "ccc_policy_count") %>%
+  left_join(
+    df_climate %>% count(period, name = "climate_total"),
+    by = "period"
+  ) %>%
+  mutate(
+    proportion = ccc_policy_count / climate_total,
+    percentage = round(proportion * 100, 2),
+    proportion = round(proportion, 3),
+    period     = factor(period, levels = c("pre", "transition", "post"))
+  ) %>%
+  arrange(period)
+
+ccc_policy_period_ratio
+```
+
+---
+
+# Keyness analysis
+The study employs the R quanteda package (Benoit et al. 2018). The analysis is conducted with three steps: 1) corpus preparation, 2) keyness statistical analysis, and 3) peak keywords selection based on KWIC and iterative manual inspection of sample texts.
+
+## Prepare corpus (pre vs post only)
+```{r keyness-prep}
+# Prepare the pre/post comparison corpus, excluding the transition year as specified. The two periods contain different numbers of calendar years.
+
+# Transition year (2020) excluded from main comparison.
+# Apostrophes are removed entirely ("") rather than replaced with a space (" ") to prevent words like "c'est" from being split into two tokens ("c", "est"), which would leave residual single-character tokens that are difficult to remove via stopwords.
+
+df_keyness <- df_climate %>%
+  filter(period %in% c("pre", "post")) %>%
+  mutate(
+    comparison_period = period,
+    speech_text_clean = speech_text %>%
+     str_to_lower() %>%
+     str_replace_all("\\b(l|d|j|n|m|s|c|qu)'", " ") %>%
+     str_replace_all("\\b(l|d|j|n|m|s|c|qu)\u2019", " ") %>%
+     str_replace_all("[''\u2019]", "") %>%
+     str_squish()
+  )
+
+table(df_keyness$comparison_period)
+```
+
+## Tokenisation
+```{r tokenisation}
+# Convert texts into tokens and apply the stated token-processing choices before constructing the document-feature matrix.
+
+corp_keyness <- corpus(df_keyness, text_field = "speech_text_clean")
+docvars(corp_keyness, "comparison_period") <- df_keyness$comparison_period
+
+toks_keyness <- tokens(
+  corp_keyness,
+  remove_punct   = TRUE,
+  remove_numbers = TRUE,
+  remove_symbols = TRUE
+) %>%
+  tokens_tolower()
+
+# Compound multi-word expressions
+# French parliamentary discourse contains many meaningful compound terms.
+# Without compounding, "transition écologique" is split into two separate unigrams, diluting its analytical signal. tokens_compound() preserves these as single features (e.g., transition_écologique).
+
+mwe_list <- phrase(c(
+  # Climate policy general
+  "transition écologique", "transition énergétique",
+  "fiscalité carbone", "neutralité carbone", "empreinte carbone",
+  "énergies renouvelables", "sobriété énergétique",
+  "rénovation énergétique", "efficacité énergétique",
+  "économie circulaire", "zéro artificialisation nette",
+  "transition juste", "report modal",
+  "alimentation durable", "engrais minéraux azotés", "sortie du pétrole",
+  # CCC explicit
+  "convention citoyenne", "convention citoyenne pour le climat",
+  "conventions citoyennes", 
+  # Consumption
+  "plastique à usage unique", "consommation responsable",
+  "affichage environnemental", "affichage carbone",
+  "déchets demballage", "réduction des déchets",
+  "matériaux biodégradables", "contenants réutilisables",
+  "bouteilles plastiques",
+  # Production
+  "produits durables", "longévité des produits",
+  "investissements verts", "clauses environnementales",
+  "droit pollueur-payeur", "filières émettrices",
+  "énergie décarbonée", "énergie verte",
+  # Transport
+  "mobilité durable", "véhicules faibles émissions",
+  "mobilités douces", "véhicules partagés", "mobilités alternatives",
+  "zones de faible émission", "pistes cyclables",
+  "véhicules électriques", "véhicules hybrides",
+  "émissions du véhicule",
+  # Housing
+  "construction bas carbone", "performance énergétique",
+  "rénovation globale", "chaudières au fioul",
+  "passoires énergétiques", "bâtiments énergivores",
+  "audit énergétique", "déperditions de chaleur", "chauffage au fioul",
+  # Food
+  "repas végétariens", "restauration collective",
+  "gaspillage alimentaire", "pratiques agroécologiques",
+  "réduction des pesticides", "agriculture biologique",
+  "plan protéagineux", "prairies permanentes",
+  "reconversion de lélevage", "développement des légumineuses",
+  "engrais chimiques", "couvert végétal", "élevages de ruminants",
+  "pêche durable", "consommation de viande", "régime moins carné",
+  # Constitution
+  "crime décocide", "érosion de la biodiversité",
+  "utilisation des sols", "pollution chimique",
+  "dommage écologique", "préjudice écologique"
+))
+
+toks_keyness <- tokens_compound(toks_keyness, pattern = mwe_list)
+
+# Stopwords removal
+# Note: apostrophes have been removed entirely in the pre-processing step,
+# so contractions like "c'est" become "cest", "d'un" becomes "dun", etc.
+# These collapsed forms are included explicitly in the stopword list below.
+toks_keyness <- tokens_remove(
+  toks_keyness,
+  pattern = c(
+    stopwords("fr"),
+    "mme", "monsieur", "madame", "ministre",
+    "président", "présidente", "collègue", "collègues",
+    "rapporteur", "rapporteure", "député", "députés",
+    "séance", "commission", "article", "articles", "assemblée",
+    "l", "d", "j", "n", "m", "s", "c",
+    "être", "donc", "très", "comme", "tout", "aussi",
+    "bien", "si", "tous", "plus", "non", "a",
+    # noise-words removed via KWIC and sample text inspection
+    "délégué", "déléguée", "délégués", "déléguées",
+    "soutien", "aides", "démocrates", "harcèlement",
+    "barbara", "julien", "chantal", "cendra",
+    "cnr", "traversons"
+  )
+)
+
+# NOTE on lemmatisation:
+# French morphology means inflected forms (e.g., "rénovation"/"rénovations", "climatique"/"climatiques") are counted as distinct features.
+# Lemmatisation via the {udpipe} package with a French UD model would reduce this noise but was not applied here due to computational cost.
+
+```
+
+## Build DFM
+```{r build-dfm, results='hide'}
+# Construct the document-feature matrix and apply the stated frequency filtering prior to the keyness comparison.
+
+dfm_keyness <- dfm(toks_keyness)
+
+# Global minimum frequency filter (applied before grouping): removes features appearing fewer than 5 times across the full corpus.
+# This is a conservative pre-filter; a stricter threshold (total >= 10) is applied after grouping in the low-frequency filter step below.
+
+dfm_keyness <- dfm_trim(dfm_keyness, min_termfreq = 5)
+
+topfeatures(dfm_keyness, 30)
+dfm_keyness
+
+# Group by period for keyness comparison
+dfm_grouped <- dfm_group(dfm_keyness, groups = comparison_period)
+```
+
+## Run keyness (G²)
+```{r run-keyness}
+# Calculate the G² keyness statistic to identify vocabulary whose relative frequency differs between the comparison periods.
+
+# G² (log-likelihood ratio) — primary statistic.
+# Preferred over chi² for corpus linguistics: more robust with low-frequency cells.
+# keyness_lr_raw preserves the original "keyness" class required by textplot_keyness(). Renaming or relocating columns strips this class, so a separate working object (keyness_lr) is created for downstream analysis.
+
+keyness_lr_raw <- textstat_keyness(
+  dfm_grouped,
+  target  = "post",
+  measure = "lr"
+)
+
+keyness_lr <- keyness_lr_raw %>%
+  rename(pre = "n_reference", post = "n_target") %>%
+  relocate(pre:post, .after = "feature")
+```
+
+## Effect size: Log Ratio + 95% CI (Hardie 2014)
+```{r effect-size}
+# Log Ratio measures the relative frequency difference between post and pre corpora on a log2 scale (LR = 1 means twice as frequent in post; LR = -1 means half).
+# 0.5 smoothing is applied to handle zero counts (standard practice).
+# 95% CI is computed following Hardie (2014): if the CI crosses zero, the direction of the effect is uncertain and the keyword is flagged unreliable.
+
+
+total_pre  <- sum(dfm_grouped["pre",  ])
+total_post <- sum(dfm_grouped["post", ])
+
+keyness_ef <- keyness_lr %>%
+  mutate(
+    post_r    = (post + 0.5) / total_post,
+    pre_r     = (pre  + 0.5) / total_pre,
+    log_ratio = log2(post_r / pre_r),
+    margin    = 1.96 * sqrt(1 / post + 1 / pre),
+    ci_lower  = log_ratio - margin,
+    ci_upper  = log_ratio + margin,
+    reliable  = (ci_lower > 0 | ci_upper < 0)
+  ) %>%
+  select(-post_r, -pre_r, -margin)
+```
+
+## Multiple testing correction (Benjamini-Hochberg)
+```{r multiple-testing}
+# BH controls the False Discovery Rate rather than the Family-Wise Error Rate (Bonferroni). This is the appropriate choice for exploratory corpus analysis where a large number of features are tested simultaneously and some false positives are acceptable in exchange for higher statistical power.
+
+keyness_ef <- keyness_ef %>%
+  mutate(p_G2_adj = p.adjust(p, method = "BH")) %>%
+  relocate(p_G2_adj, .after = "p")
+```
+
+## Low-frequency inspection and filter
+```{r low-freq-inspect, results='hide'}
+# Step 1: Inspect low-frequency items before filtering.
+# These are items where effect size estimates are unreliable regardless of G² significance (small absolute counts amplify noise).
+
+low_freq_items <- keyness_ef %>%
+  mutate(total_count = pre + post) %>%
+  filter(total_count < 10) %>%
+  arrange(desc(log_ratio))
+
+cat("Number of features with total count < 10:", nrow(low_freq_items), "\n")
+print(low_freq_items %>% select(feature, pre, post, G2, log_ratio))
+```
+
+```{r low-freq-filter, results='hide'}
+# Step 2: Apply the dual filter for reliable final keyword list.
+# All four criteria must be met simultaneously:
+#   (a) total_count >= 10  — removes unstable low-count estimates
+#   (b) p_G2_adj < 0.05   — statistically significant after BH correction
+#   (c) |log_ratio| >= 1  — at least 2x relative frequency difference
+#   (d) reliable == TRUE  — 95% CI does not cross zero (Hardie 2014)
+
+keyness_reliable <- keyness_ef %>%
+  mutate(total_count = pre + post) %>%
+  filter(
+    total_count    >= 10,
+    p_G2_adj       <  0.05,
+    abs(log_ratio) >= 1,
+    reliable       == TRUE
+  ) %>%
+  arrange(desc(G2))
+
+cat("Number of reliable keywords after dual filter:", nrow(keyness_reliable), "\n")
+
+```
+
+---
+
+# Final keyword tables
+
+## Top 50 by G² (statistical salience)
+```{r top50-g2, results='hide'}
+# ci_lower and ci_upper are omitted: all features in keyness_reliable have already passed the reliable == TRUE filter (CI does not cross zero).
+
+top50_G2 <- keyness_reliable %>%
+  arrange(desc(G2)) %>%
+  select(feature, pre, post, G2, p_G2_adj, log_ratio) %>%
+  head(50)
+
+top50_G2
+```
+
+## Top 50 by Log Ratio (effect size)
+```{r top50-lr, results='hide'}
+# Calculate or display the relevant period-level proportions. The interpretation depends on the numerator, denominator and dictionary specification used in this chunk.
+
+
+top50_lr <- keyness_reliable %>%
+  arrange(desc(log_ratio)) %>%
+  select(feature, pre, post, log_ratio, G2, p_G2_adj) %>%
+  head(50)
+
+top50_lr
+```
+
+## Top 50 negative keyness (pre > post)
+```{r top50-negative, results='hide'}
+# Carry out the 'Top 50 negative keyness (pre > post)' step and inspect its output before proceeding. This chunk forms part of the documented workflow; its results have not been independently re-run here.
+
+# Words significantly more frequent in the pre-CCC period.
+
+top50_negative <- keyness_ef %>%
+  mutate(total_count = pre + post) %>%
+  filter(
+    total_count    >= 10,
+    p_G2_adj       <  0.05,
+    log_ratio      <= -1,
+    reliable       == TRUE
+  ) %>%
+  arrange(log_ratio) %>%
+  select(feature, pre, post, log_ratio, G2, p_G2_adj) %>%
+  head(50)
+
+top50_negative
+```
+
+---
+
+# Visualisation
+```{r plot-keyness, fig.width=10, fig.height=8}
+# Produce the figure for the preceding analysis. Check the axis labels, denominator and time grouping against the data object used in this chunk.
+
+# Plot showing top 15 reliable keywords by G2
+
+top15_G2 <- top50_G2 %>%
+ slice_max(G2, n = 15) %>%
+ arrange(G2)
+
+ggplot(
+ top15_G2,
+ aes(
+  x = reorder(feature, G2),
+  y = G2
+ )
+) +
+ geom_col() +
+ coord_flip() +
+ labs(
+  title = expression("Top 15 reliable keywords by " * G^2),
+  x = NULL,
+  y = expression(G^2)
+ ) +
+ theme_minimal(base_size = 12)
+
+
+ggsave(
+ "Top15_G2_pre_post.png",
+ width = 8, height = 6, dpi = 300
+)
+
+```
+
+
+```{r plot-logratio, fig.width=10, fig.height=7}
+# Produce the figure for the preceding analysis. Check the axis labels, denominator and time grouping against the data object used in this chunk.
+# Log Ratio plot with 95% CI for top 20 reliable keywords.
+# Point position = Log Ratio; error bars = 95% CI (Hardie 2014).
+# Dotted vertical lines mark the |LR| = 1 threshold.
+
+top20_plot <- keyness_reliable %>%
+  arrange(desc(abs(log_ratio))) %>%
+  head(20) %>%
+  mutate(
+    direction = if_else(log_ratio > 0,
+                        "post (more frequent)",
+                        "pre (more frequent)"),
+    feature   = reorder(feature, log_ratio)
+  )
+
+ggplot(top20_plot, aes(x = log_ratio, y = feature, colour = direction)) +
+  geom_point(size = 2.5) +
+  geom_errorbarh(
+    aes(xmin = ci_lower, xmax = ci_upper),
+    height = 0.3, linewidth = 0.6
+  ) +
+  geom_vline(xintercept = 0,
+             linetype = "dashed", colour = "grey50") +
+  geom_vline(xintercept = c(-1, 1),
+             linetype = "dotted", colour = "grey70") +
+  scale_colour_manual(
+    values = c("post (more frequent)" = "#2166ac",
+               "pre (more frequent)"  = "#d6604d")
+  ) +
+  labs(
+    title    = "Top 20 distinctive keywords by Log Ratio (pre vs post-CCC)",
+    x        = "Log Ratio (log2 scale)",
+    y        = NULL,
+    colour   = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+
+ggsave(
+ "Top20_LR_pre_post.png",
+ width = 8, height = 6, dpi = 300
+)
+
+```
+
+---
+
+# Export results
+```{r export, results='hide'}
+# Write the analysis outputs to the file paths specified in the code. Confirm those paths exist in the execution environment before re-running.
+
+summary_stats <- tibble(
+  statistic = c("Min", "Q1", "Median", "Mean", "Q3", "Max"),
+  G2        = as.numeric(summary(keyness_reliable$G2)),
+  log_ratio = as.numeric(summary(keyness_reliable$log_ratio))
+) %>%
+  mutate(across(where(is.numeric), ~ round(., 3)))
+
+write.xlsx(
+  list(
+    summary_stats  = as.data.frame(summary_stats),
+    top50_G2       = as.data.frame(top50_G2),
+    top50_lr       = as.data.frame(top50_lr),
+    top50_negative = as.data.frame(top50_negative),
+    all_reliable   = as.data.frame(keyness_reliable),
+    all_combined   = as.data.frame(keyness_ef)
+  ),
+  file = "keyness_results_final.xlsx"
+)
+
+cat("Export complete.\n")
+```
+
+---
+
+# KWIC inspection
+
+## Keyword selection
+```{r kwic-selection-export}
+# Export keyness_reliable sorted by G² and Log Ratio separately for manual inspection in Excel. Keywords appearing in the upper range of both distributions are prioritised for KWIC inspection.
+
+write.xlsx(
+  list(
+    by_G2        = keyness_reliable %>%
+                     arrange(desc(G2)) %>%
+                     select(feature, pre, post, G2, p_G2_adj, log_ratio) %>%
+     mutate(
+      G2 = round(G2, 2),
+      log_ratio = round(log_ratio, 2),
+      p_G2_adj = case_when(
+       p_G2_adj < 0.001 ~ "< .001",
+       TRUE ~ as.character(round(p_G2_adj, 3))
+      )
+     ),
+    by_log_ratio = keyness_reliable %>%
+                     arrange(desc(log_ratio)) %>%
+                     select(feature, pre, post, G2, p_G2_adj, log_ratio) %>%
+     mutate(
+      G2 = round(G2, 2),
+      log_ratio = round(log_ratio, 2),
+      p_G2_adj = case_when(
+       p_G2_adj < 0.001 ~ "< .001",
+       TRUE ~ as.character(round(p_G2_adj, 3))
+      )
+     )
+  ),
+  file = "keyness_inspection_final.xlsx"
+)
+```
+
+## KWIC concordance lines
+```{r kwic-concordance}
+# Concordance lines (window = 10 tokens) for keywords selected from the inspection spreadsheet. Update the pattern list based on the Excel review.
+# Priority: keywords with ambiguous cluster assignment, potential noise, and those appearing in the upper range of both G² and Log Ratio.
+
+kwic_keywords <- kwic(
+  toks_keyness,
+  pattern = c(
+    "relance", "crise", "plan", "présidence",
+    "aéronautique", "publicité", "textile", "animaux",
+    "chargé"
+  ),
+  window    = 10
+) %>%
+  as.data.frame() %>%
+ mutate(docname_num = str_extract(docname, "\\d+")) %>%
+  left_join(
+    df_keyness %>%
+      mutate(docname_num = as.character(row_number())) %>%
+      select(docname_num, year, period),
+    by = "docname_num"
+  ) %>%
+ select(-docname_num)
+
+write.xlsx(kwic_keywords, "kwic_keywords_final.xlsx")
+
+# window enlargement
+kwic_chargé_w20 <- kwic(
+  toks_keyness,
+  pattern = 
+    "chargé",
+  window    = 20
+) %>%
+  as.data.frame() %>%
+ mutate(docname_num = str_extract(docname, "\\d+")) %>%
+  left_join(
+    df_keyness %>%
+      mutate(docname_num = as.character(row_number())) %>%
+      select(docname_num, year, period),
+    by = "docname_num"
+  ) %>%
+ select(-docname_num)
+
+write.xlsx(kwic_chargé_w20, "kwic_chargé_w20.xlsx")
+
+```
+
+
+# sample text inspection
+```{r text inspection}
+# Inspect intermediate results for coverage, plausible matches and potential noise. This is a diagnostic step rather than a separate inferential test.
+
+df_keyness %>%
+  filter(str_detect(speech_text,
+                    regex(
+"\\b(présidence|traversons|chargé|cnr|textile|animaux)\\b", 
+ignore_case = TRUE))) %>%
+ mutate(keyword = str_extract(speech_text,
+"\\b(présidence|traversons|chargé|CNR|textile|animaux)\\b")) %>%
+ group_by(keyword, year, period) %>%
+ slice_sample(n = 5) %>%
+ select(keyword, year, period, speech_text) %>%
+ arrange(keyword, year) %>%
+ write.csv("sample_inspection_newly_added.csv", row.names = FALSE, fileEncoding = "UTF-8")
+
+# inspection per word
+plan_sample <- df_keyness %>%
+  filter(str_detect(speech_text,
+                    regex("\\bplan\\b", ignore_case = TRUE))) %>%
+ mutate(keyword = str_extract(speech_text,
+                              regex("\\bplan\\b", ignore_case = TRUE))
+) %>%
+ group_by(year, period) %>%
+ slice_sample(prop = 1) %>%
+ slice_head(n = 5) %>%
+ ungroup() %>%
+ select(keyword, year, period, speech_text) %>%
+ arrange(year, period)
+
+ write.xlsx(plan_sample, "sample_inspection_plan.xlsx")
+```
+
+---
+
+# corpus size
+```{r}
+# Construct or inspect the working speech corpus and its analytical subsets.
+
+corpus_size_yearly <- df_keyness %>%
+ mutate(
+  n_words = str_count(speech_text, "\\S+")
+ ) %>%
+ group_by(year) %>%
+ summarise(
+  speeches = n(),
+  total_words = sum(n_words),
+  .groups = "drop"
+ )
+
+corpus_size_yearly
+
+```
+
+---
+
+# Peaks in keywords
+```{r peak in keywords}
+# Count frequency of each peak keyword per year.
+# Keywords are lowercased to avoid duplicate counting (e.g. "Présidence" vs "présidence").
+
+peak_keywords <- c(
+ "relance", "crise", "résilience",
+ "convention citoyenne pour le climat",
+ "dérèglement", "aéronautique",
+ "néonicotinoïdes","écocide"
+)
+
+# yearly peak keywords
+peak_yearly <- df_keyness %>%
+ select(year, period, speech_text) %>%
+ mutate(
+  speech_text_lower = str_to_lower(speech_text)
+ ) %>%
+ crossing(keyword = peak_keywords) %>%
+  filter(
+   str_detect(speech_text, regex(paste0("\\b", keyword, "\\b"))
+  )
+   ) %>%
+  count(keyword, year, name = "n")
+
+# Export wide-format table for reporting
+peak_yearly_wide <- peak_yearly %>%
+  pivot_wider(
+    names_from  = year,
+    values_from = n,
+    values_fill = 0
+  ) %>%
+  arrange(keyword)
+
+write.xlsx(peak_yearly_wide, "peak_keywords_yearly.xlsx")
+
+# normalised yearly peak keywords
+peak_yearly_norm <- peak_yearly %>%
+ left_join(corpus_size_yearly, by = "year") %>%
+ mutate(
+  freq_100k = (n / total_words) * 100000
+ )
+
+# Export wide-format table for normalised version
+peak_year_norm_wide <- peak_yearly_norm %>%
+ select(keyword, year, freq_100k) %>%
+ pivot_wider(
+  names_from = year,
+  values_from = freq_100k,
+  values_fill = 0
+ ) %>%
+ arrange(keyword)
+
+peak_year_norm_wide %>%
+ mutate(across(where(is.numeric), ~ round(., 2))) %>%
+write.xlsx("peak_keywords_yearly_norm.xlsx")
+
+
+```
+
+---
+
+# Visualisation
+```{r plot-main, fig.width=10, fig.height=6}
+# Produce the figure for the preceding analysis. Check the axis labels, denominator and time grouping against the data object used in this chunk.
+
+# Main text figure: top 8 keywords by G² (directly specified from keyness_reliable)
+
+keyword_order <- peak_yearly %>%
+ group_by(keyword) %>%
+ summarise(total_n = sum(n, na.rm = TRUE),
+           .groups = "drop") %>%
+ arrange(desc(total_n)) %>%
+ pull(keyword)
+
+peak_yearly <- peak_yearly %>%
+ mutate(
+  keyword = factor(keyword, levels = keyword_order)
+ )
+
+yearly_trends_raw <- peak_yearly %>%
+ ggplot(aes(
+  x = year,
+  y = n,
+  colour = keyword, group = keyword
+ )) +
+ geom_line(linewidth = 0.8) +
+ geom_point(size = 2) +
+ geom_vline(
+  xintercept = 2020,
+  linetype = "dashed",
+  colour = "grey50"
+ ) +
+ annotate(
+  "text",
+  x = 2020.1,
+  y = Inf,
+  label = "CCC publication",
+  hjust = 0,
+  vjust = 1.5,
+  size = 3.5,
+  colour = "grey50"
+ ) +
+ scale_x_continuous(
+  breaks = 2017:2022
+ ) +
+ labs(
+  title = "Yearly frequency of selected peak keywords",
+  subtitle = "Raw counts within the climate-policy corpus",
+  x = NULL,
+  y = "Frequency",
+  colour = "Keyword"
+ ) +
+ theme_minimal(base_size = 12) +
+ theme(
+  legend.position = "right",
+  legend.title = element_text(face = "bold"),
+  plot.title = element_text(face = "bold"),
+  plot.subtitle = element_text(size = 10)
+ )
+
+yearly_trends_raw
+
+ggsave("yearly_trends_raw.png", yearly_trends_raw, width = 10, height = 6, dpi = 300)
+
+# normalised frequency (robustness)
+keyword_order <- peak_yearly_norm %>%
+ group_by(keyword) %>%
+ summarise(total_freq = sum(freq_100k, na.rm = TRUE),
+.groups = "drop") %>%
+ arrange(desc(total_freq)) %>%
+ pull(keyword)
+
+yearly_trends_norm <- peak_yearly_norm %>%
+ ggplot(aes(
+  x = year,
+  y = freq_100k,
+  colour = keyword,
+  group = keyword
+ )
+ ) +
+ geom_line(linewidth = 0.8) +
+ geom_point(size = 2) +
+ 
+ geom_vline(
+  xintercept = 2020,
+  linetype = "dashed",
+  colour = "grey50"
+ ) +
+ annotate(
+  "text",
+  x = 2020.1,
+  y = Inf,
+  label = "CCC publication",
+  hjust = 0,
+  vjust = 1.5,
+  size = 3.5,
+  colour = "grey50"
+ ) +
+ scale_x_continuous(
+  breaks = 2017:2022
+ ) +
+ labs(
+  title = "Normalised yearly frequency of selected peak keywords",
+  subtitle = "Frequency per 100,000 words within the climate-policy corpus",
+  x = NULL,
+  y = "Frequency per 100,000 words",
+  colour = "Keyword"
+ ) +
+ theme_minimal(base_size = 12) +
+ theme(
+  legend.position = "right",
+  legend.title = element_text(face = "bold"),
+  plot.title = element_text(face = "bold"),
+  plot.subtitle = element_text(size = 10)
+ )
+
+yearly_trends_norm
+
+ggsave("yearly_trends_norm.png", yearly_trends_norm, width = 10, height = 6, dpi = 300)
+
+```
+
+
+---
+
+# Methodological notes (for methods section)
+
+1. **Corpus size imbalance**: The pre-CCC period spans three years (2017-2019) while the post-CCC period covers two years (2021-2022). G² operates on normalised relative frequencies and therefore accounts for this difference in corpus size. Nevertheless, the 2017 sub-corpus is substantially smaller than subsequent years, which may introduce instability in pre-period estimates.
+
+2. **G² over chi²**: G² (log-likelihood ratio) is preferred over chi² for corpus keyness analysis as it is more robust when observed or expected cell frequencies are low, a common occurrence in large-scale lexical comparisons (Gabrielatos 2018).
+
+3. **Multiple testing correction**: Given that keyness analysis involves simultaneous testing across a large number of features, p-values are adjusted using the Benjamini-Hochberg (BH) procedure, which controls the False Discovery Rate. Bonferroni correction was considered but rejected as overly conservative for exploratory corpus analysis (Benjamini and Hochberg 1995).
+
+4. **Effect size threshold**: A Log Ratio threshold of |LR| >= 1 (equivalent to a minimum twofold difference in relative frequency) is applied in combination with statistical significance to distinguish substantively meaningful keywords from statistically significant but practically negligible differences (Hardie 2014).
+
+5. **Confidence intervals for Log Ratio**: Following Hardie (2014), 95% confidence intervals are computed for all Log Ratio estimates. Features whose CI crosses zero are excluded from the final keyword list regardless of G² significance, as the direction of the effect cannot be considered reliable.
+
+6. **Lemmatisation**: French morphological inflection means that related surface forms are counted as distinct features. Lemmatisation was not applied in this analysis, which constitutes a methodological limitation to be acknowledged.
+
+7. **Multi-word expressions**: Key compound terms (e.g., transition ecologique, convention citoyenne) are compounded prior to tokenisation using tokens_compound() to preserve their lexical integrity as single analytical units.

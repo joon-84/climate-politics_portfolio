@@ -1,0 +1,242 @@
+---
+title: "Full corpus building"
+author: "Junhui Park"
+date: "`r Sys.Date()`"
+output: html_document
+---
+## Purpose
+To construct the climate-policy corpus from French National Assembly parliamentary speeches (2017-2022).
+
+## Corpus definition
+The main climate-policy corpus is constructed using keyword matching with word boundaries.
+
+## Output
+- Full corpus (df_full)
+- Climate-policy corpus (df_climate)
+
+## Important decisions
+- The analysis focuses on the period 2017-2022.
+- A word-boundary matching strategy is used to reduce partial and ambiguous keyword matches.
+- The resulting climate-policy corpus contains 21,776 speeches.
+
+
+## Workflow note
+This document constructs the speech-level corpus used in the subsequent analyses. It loads and parses the parliamentary XML files, standardises the extracted text, assigns temporal variables, and identifies the climate-policy subset. The inspection chunks document corpus coverage and help identify unexpected extraction or matching results. The code below is preserved as originally supplied; the accompanying notes describe its role rather than implying that it has been re-run or independently validated.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE)
+# Load the packages and establish the options used by subsequent chunks. Reproducibility depends on the stated package versions, local input files and working environment.
+
+# libraries
+library(xml2)
+library(dplyr)
+library(stringr)
+library(purrr)
+library(tibble)
+
+# global options
+options(stringAsFactors = FALSE)
+
+# reproductibility
+set.seed(123)
+
+# knitr options
+knitr::opts_chunk$set(
+ echo = TRUE,
+ warning = FALSE,
+ message = FALSE)
+```
+
+## Data loading
+
+## Data source
+The corpus consists of plenary speeches from the French National Assembly 2017 and 2022. Parliamentary debates were collected from XML records and converted into a structured speech-level dataset.
+The initial parsed corpus contained 1,029,904 text segements before cleaning and filtering.
+
+```{r data loading, results='hide'}
+
+# Read the parliamentary source files into R. The resulting objects provide the input for the extraction and filtering steps below.
+
+all_files <- list.files("xml_folder_path",
+                    pattern = "\\.xml$",
+                    full.names = TRUE)
+
+length(all_files)
+head(all_files, 5)
+
+test_file <- all_files[1]
+test_file
+
+```
+
+## parsing
+```{r parsing}
+# Extract speech text and relevant metadata from the XML structure, applying the cleaning operations specified in the code. Subsequent counts depend on the unit of text produced here. During processing, non-substantive elements, such as procedural statements, numerical artefacts, and formatting-related texts were removed.Texts were subsequently cleaned and standardised for corpus analysis.
+
+parse_one_xml <- function(file_path) {
+ doc <- read_xml(file_path)
+ xml_ns_strip(doc)
+ 
+ if (length(xml_find_all(doc, ".//paragraphe")) > 0) {
+  nodes <- xml_find_all(doc, ".//paragraphe")
+  tag_used <- "paragraphe"
+ } else if (length(xml_find_all(doc, ".//para")) > 0) {
+  nodes <- xml_find_all(doc, ".//para")
+  tag_used <- "para"
+ } else if (length(xml_find_all(doc, ".//texte")) > 0) {
+  nodes <- xml_find_all(doc, ".//texte")
+  tag_used <- "texte"
+ } else {
+  return(tibble(
+         file = basename(file_path),
+         tag_used = NA_character_,
+         speech_text = NA_character_
+         ))
+ }
+ 
+tibble(
+ file = basename(file_path),
+ tag_used = tag_used,
+ speech_text = xml_text(nodes)
+) %>%
+ mutate(
+  speech_text = str_remove_all(speech_text, "\\d+"),
+  speech_text = str_remove_all(speech_text, "\\([^\\)]+\\)"),
+  speech_text = str_remove_all(speech_text, "La parole est à.*?(\\.|$)"),
+  speech_text = str_remove_all(speech_text, "La séance est.*?(\\.|$)"),
+  speech_text = str_squish(speech_text)
+ ) %>%
+ filter(!is.na(speech_text), speech_text != "")
+}
+
+```
+
+
+## full corpus building
+The cleaned full corpus contains 735,661 speeches.
+```{r full corpus building, results='hide'}
+
+# Assemble the extracted speeches into the working corpus. Check the object structure and row counts before interpreting later subsets.
+
+library(purrr)
+df_full <- map_dfr(all_files, parse_one_xml)
+
+dim(df_full)
+head(df_full, 10)
+table(df_full$tag_used, useNA = "ifany")
+
+df_full <- df_full %>%
+ filter(!is.na(speech_text), speech_text != "")
+
+```
+
+## temporal variables
+The analysis focuses on the period 2017-2022, which includes the period before and after the publication of CCC recommendations in 2020.
+** pre-period: 2017-2019
+** transition-period: 2020
+** post-period: 2021-2022
+```{r temporal variables}
+# Derive the year and analytical period used in subsequent comparisons. The transition year is treated separately where specified in the code.
+
+df_full <- df_full %>%
+ mutate(
+  year = stringr::str_extract(file, "20\\d{2}") %>%
+   as.numeric(),
+  period = case_when(
+   year %in% 2017:2019 ~ "pre",
+   year == 2020 ~ "transition",
+   year %in% 2021:2022 ~ "post",
+   TRUE ~ NA_character_
+ )
+) %>%
+ filter(year %in% 2017:2022)
+
+```
+
+
+## climate dictionary
+
+## Constructing climate-policy keywords
+Climate-policy keywords were assembled from general climate-related terms and key French policy documents, including the SNBC-3 and the Loi Climat et Résilience.
+```{r climate-policy dictionary}
+# Define the general climate-policy terms used to identify the relevant parliamentary speech subset. This dictionary defines the analytical corpus, not explicit CCC references.
+
+
+climate_keywords <- c(
+ "climat", "climatique",
+ "environnement", "écologie",
+ "transition écologique",
+ "transition énergétique",
+ "émissions",
+ "carbone",
+ "pollution",
+ "fiscalité carbone",
+ "pesticides",
+ "déchets",
+ "recyclage",
+ "passoires énergétiques",
+ "neutralité carbone",
+ "empreinte carbone",
+ "énergies renouvelables",
+ "sobriété énergétique",
+ "rénovation énergétique",
+ "efficacité énergétique",
+ "économie circulaire",
+ "zéro artificialisation nette",
+ "transition juste",
+ "report modal",
+ "covoiturage",
+ "alimentation durable",
+ "engrais minéraux azotés",
+ "sortie du pétrole"
+ )
+```
+
+
+## climate subset 
+The climate-policy corpus contains 21,776 speeches, corresponding to 2.96 per cent of the full corpus.
+```{r climate-policy subset}
+# Select speech texts matching the general climate-policy dictionary. This subset supplies the reference population for subsequent proportions.
+
+climate_pattern <- regex(
+ paste0("\\b(", paste(climate_keywords, collapse = "|"), ")\\b"), ignore_case = TRUE
+)
+
+df_climate <- df_full %>%
+ filter(str_detect(speech_text, climate_pattern))
+
+dim(df_climate)
+nrow(df_climate) / nrow(df_full)
+round(nrow(df_climate) / nrow(df_full) * 100, 2)
+
+df_climate %>%
+ count(period) %>%
+ mutate(ratio = n / sum(n))
+
+```
+
+## distribution check
+```{r distribution check}
+# Inspect intermediate results for coverage, plausible matches and potential noise. This is a diagnostic step rather than a separate inferential test.
+
+table(df_climate$period)
+```
+
+----
+
+## quick check
+```{r quick chek, results='hide'}
+# Inspect intermediate results for coverage, plausible matches and potential noise. This is a diagnostic step rather than a separate inferential test.
+
+set.seed(123)
+
+df_climate %>%
+ slice_sample(n = 10) %>%
+ select(file, speech_text)
+```
+
+
+
+
+
