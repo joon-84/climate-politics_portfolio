@@ -3,11 +3,11 @@ README
 Junhui Park
 2026-06-14
 
-# Environmental Protection Issues in Party Programmes in Western Europe
+# Environmental Protection Issues in Party Programmes in European Democracies
 
 ## Project Overview
 
-This project examines how political parties in four Western European
+This project examines how political parties in four European
 countries (France, Germany, Sweden, and the United Kingdom) differ in
 their environmental protection manifesto scores across time (1940–2020)
 and depending on party family, using the Comparative Manifesto Project
