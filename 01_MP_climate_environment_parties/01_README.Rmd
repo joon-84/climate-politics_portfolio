@@ -1,0 +1,81 @@
+---
+title: "README"
+author: "Junhui Park"
+date: "`r Sys.Date()`"
+output: github_document
+---
+
+# Environmental Protection Issues in Party Programmes in Western Europe
+
+## Project Overview
+
+This project descriptively examines how emphasis on environmental protection in election manifestos varies across five political families in five Western European countries (Austria, France, Germany, the Netherlands, and Switzerland) between 1940 and 2020. It uses the Manifesto Project dataset obtained from the WZB Berlin Social Science Center (https://manifesto-project.wzb.eu).
+
+## Research Question
+
+**Research question:** How did emphasis on environmental protection in election manifestos vary across selected party families and countries between 1940 and 2020?
+
+**Exploratory questions:**
+
+- Q1: How does manifesto emphasis on environmental protection vary across the five selected party families and countries?
+- Q2: How has manifesto emphasis on environmental protection changed between 1940 and 2020 across the selected party families and countries?
+
+This is a descriptive, exploratory analysis; it does not specify formal hypotheses or test causal explanations.
+
+## Data
+
+The analysis uses the Manifesto Project dataset. The sample is restricted to manifesto observations from Austria, France, Germany, the Netherlands, and Switzerland, with election years up to and including 2020. It includes the ECO (Ecological), SOC (Social democratic), CHR (Christian democratic), LIB (Liberal), and NAT (Nationalist and radical right) party families.
+
+## Methods
+
+### Operationalisation of Variables
+
+**Unit of analysis**
+One party manifesto associated with an election. The descriptive summaries then aggregate manifesto-level per501 scores by country, party family, and election year.
+
+**Dimensions of comparison:**
+- Election year: 1940–2020
+- Party family: ECO (Ecological), SOC (Social democratic), CHR (Christian democratic), LIB (Liberal), NAT (Nationalist and radical right)
+- Country: Austria, France, Germany, the Netherlands, and Switzerland
+
+**Outcome measure:** per501 (Environmental Protection), the percentage of quasi-sentences in a manifesto coded under the Manifesto Project's Environmental Protection category. A score of zero means that no quasi-sentences in that manifesto were coded under per501. This is distinct from a country–party-family–decade combination with no selected manifesto observation.
+
+## Results
+
+The descriptive results show uneven coverage across countries, party families, and decades. Of 495 selected manifesto observations, 96 (19.4%) have a per501 score of zero. ECO has the highest reported aggregate mean per501 score (14.59); aggregate means for the other families range from 3.46 (LIB) to 4.62 (CHR). The time-series panels show variation across countries and party families, including increases during the 1990s in several series. These are descriptive patterns and do not test causal explanations.
+
+See the analysis file for the coverage summary, full results, and country-by-party-family time-series panels.
+
+## Main limitations
+
+- Only five party families and five countries are included; other families are excluded and the countries are not a sample.
+- Election-year means can rest on a single manifesto, so single documents can drive swings in the series.
+- per501 is relative to manifesto length, counts only positive mentions and contains many zeros.
+- Families are observed over different periods, so comparisons across families are only like-for-like within a common window.
+- The analysis is exploratory and descriptive; it does not explain why the patterns occur.
+
+## File Structure
+
+| Chunk | Content |
+|---|---|
+| 1 | Introduction |
+| 2 | Data loading |
+| 3 | Descriptive statistics |
+| 3.1 | Identification of data gaps |
+| 4 | Visualisation |
+| 5 | Results |
+| 5.1 | Coverage across countries, party families, and decades |
+| 5.2 | Observations with a zero per501 score |
+| 5.3 | Variation across paprty families and over time |
+
+
+
+## Packages
+
+- `manifestoR`
+- `tidyverse`
+- `ggplot2`
+
+## Note
+
+API key for the Manifesto Project database is required to run this analysis. Register at https://manifesto-project.wzb.eu and store your key locally via `mp_setapikey(key.file = "~/.manifesto/manifesto_apikey")`.
